@@ -15,7 +15,6 @@ import cn.gm.light.rtable.exception.ClientRequestException;
 import cn.gm.light.rtable.utils.HashUtil;
 import cn.gm.light.rtable.utils.IpUtil;
 import com.alipay.remoting.BizContext;
-
 import com.alipay.remoting.exception.RemotingException;
 import com.alipay.remoting.rpc.RpcResponseFuture;
 import lombok.extern.slf4j.Slf4j;
@@ -106,7 +105,7 @@ public class ProxyClientImpl implements ProxyClient , LifeCycle {
     }
 
     @Override
-    public Object get(String tableName,String family, String key, String column) throws ClientRequestException {
+    public Object get(String tableName, String family, String key, String column) throws ClientRequestException {
         TRP trp = calculateTRP(tableName, family, key, column);
         if (trp == null) {
             throw ClientRequestException.of("trp not exist");

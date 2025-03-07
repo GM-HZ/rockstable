@@ -7,7 +7,6 @@ import cn.gm.light.rtable.entity.LogEntry;
 import cn.gm.light.rtable.entity.RequestCommand;
 import cn.gm.light.rtable.entity.ResponseCommand;
 
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 

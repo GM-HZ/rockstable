@@ -1,7 +1,6 @@
 package cn.gm.light.rtable.entity;
 
 import cn.gm.light.rtable.enums.CommandType;
-import cn.gm.light.rtable.enums.CommonType;
 import lombok.Data;
 
 /**

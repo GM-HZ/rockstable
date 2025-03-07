@@ -1,6 +1,7 @@
 package cn.gm.light.rtable.entity;
 
 import com.alibaba.fastjson.annotation.JSONField;
+
 import java.util.List;
 
 public class MetadataUpdate {

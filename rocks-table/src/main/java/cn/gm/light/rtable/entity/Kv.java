@@ -2,6 +2,9 @@ package cn.gm.light.rtable.entity;
 
 import com.alibaba.fastjson.JSON;
 import lombok.Builder;
+import lombok.Data;
+
+import java.io.Serializable;
 
 /**
  * @author 明溪
@@ -11,7 +14,8 @@ import lombok.Builder;
  * @date 2025/3/3 19:17:59
  */
 @Builder
-public class Kv {
+@Data
+public class Kv implements Serializable {
     private String family;
     private String key;
     private String column;

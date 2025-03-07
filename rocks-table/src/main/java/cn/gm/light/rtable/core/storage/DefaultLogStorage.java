@@ -1,6 +1,5 @@
 package cn.gm.light.rtable.core.storage;
 
-import cn.gm.light.rtable.core.LifeCycle;
 import cn.gm.light.rtable.core.LogStorage;
 import cn.gm.light.rtable.core.config.Config;
 import cn.gm.light.rtable.entity.LogEntry;

@@ -11,11 +11,9 @@ import cn.gm.light.rtable.enums.CommonType;
 import cn.gm.light.rtable.utils.ChecksumUtil;
 import com.alibaba.fastjson.JSON;
 import com.alipay.remoting.BizContext;
-import io.etcd.jetcd.*;
-import io.etcd.jetcd.kv.GetResponse;
+import io.etcd.jetcd.Client;
+import io.etcd.jetcd.Lease;
 import io.etcd.jetcd.lease.LeaseKeepAliveResponse;
-import io.etcd.jetcd.watch.WatchEvent;
-import io.grpc.LoadBalancer;
 import io.grpc.stub.StreamObserver;
 import lombok.extern.slf4j.Slf4j;
 

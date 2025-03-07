@@ -13,7 +13,7 @@ public interface DataStorage extends LifeCycle {
 
     void put(Kv kv);
 
-    void get(Kv kv);
+    byte[] get(Kv kv);
 
     void delete(Kv kv);
 

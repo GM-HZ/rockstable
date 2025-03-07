@@ -2,9 +2,7 @@ package cn.gm.light.rtable.entity.dto;
 
 import cn.gm.light.rtable.entity.Kv;
 import cn.gm.light.rtable.entity.TRP;
-import cn.gm.light.rtable.enums.CommandType;
 import cn.gm.light.rtable.enums.CommonType;
-import cn.gm.light.rtable.entity.Endpoint;
 import lombok.Builder;
 import lombok.Data;
 

@@ -1,7 +1,7 @@
 package cn.gm.light.rtable.core.storage;
 
-import cn.gm.light.rtable.core.LifeCycle;
 import cn.gm.light.rtable.core.DataStorage;
+import cn.gm.light.rtable.core.LifeCycle;
 import cn.gm.light.rtable.core.config.Config;
 import cn.gm.light.rtable.entity.Kv;
 import cn.gm.light.rtable.entity.TRP;
@@ -93,7 +93,15 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
     }
 
     @Override
-    public void get(Kv kv) {
+    public byte[] get(Kv kv) {
+        this.lock.lock();
+        try {
+            return logDB.get(kv.getKeyBytes());
+        }catch (RocksDBException e) {
+            throw new RuntimeException(e);
+        }finally {
+            this.lock.unlock();
+        }
     }
 
     @Override

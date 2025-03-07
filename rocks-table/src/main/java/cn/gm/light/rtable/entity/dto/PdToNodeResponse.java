@@ -1,8 +1,8 @@
 package cn.gm.light.rtable.entity.dto;
 
+import cn.gm.light.rtable.entity.TRP;
 import cn.gm.light.rtable.enums.CommandType;
 import cn.gm.light.rtable.enums.CommonType;
-import cn.gm.light.rtable.entity.TRP;
 import lombok.Data;
 
 @Data

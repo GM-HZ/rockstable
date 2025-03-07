@@ -3,10 +3,9 @@ package cn.gm.light.rtable.core;
 import cn.gm.light.rtable.Chunk;
 import cn.gm.light.rtable.core.config.Config;
 import cn.gm.light.rtable.core.queue.QueueCustomer;
-import cn.gm.light.rtable.core.queue.RocketMQConsumer;
 import cn.gm.light.rtable.core.replication.ReplicationsTask;
-import cn.gm.light.rtable.core.storage.DefaultDataStorage;
-import cn.gm.light.rtable.core.storage.DefaultLogStorage;
+import cn.gm.light.rtable.core.storage.DefaultStorageEngine;
+import cn.gm.light.rtable.core.storage.ReplicationEventListener;
 import cn.gm.light.rtable.entity.*;
 import cn.gm.light.rtable.entity.dto.ProxyToNodeRequest;
 import cn.gm.light.rtable.utils.TimerTask;
@@ -15,10 +14,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 /**
  * @project JavaStudy
@@ -30,8 +25,7 @@ public class ChunkImpl implements Chunk {
     private TRP trp;
     private Endpoint endpoint;
     private List<Endpoint> groups;
-    private DataStorage dataStorage;
-    private LogStorage logStorage;
+    private StorageEngine storageEngine;
     private Map<String, String> matchIndex;
     private Config config;
     private boolean isLeader;
@@ -55,7 +49,7 @@ public class ChunkImpl implements Chunk {
         LogEntry logEntry = new LogEntry();
         logEntry.setCommand(requestCommand);
         logEntry.setTerm(term);
-        Long append = this.logStorage.append(new LogEntry[]{logEntry});
+        Long append = this.storageEngine.appendLog(logEntry);
         ProxyToNodeRequest proxyToNodeRequest = null;
         if (requestCommand.getCommand() instanceof ProxyToNodeRequest) {
             proxyToNodeRequest = (ProxyToNodeRequest) requestCommand.getCommand();
@@ -63,19 +57,19 @@ public class ChunkImpl implements Chunk {
             Kv[] kvs = proxyToNodeRequest.getKvs();
             switch (proxyToNodeRequest.getOperation()) {
                 case PUT:
-                    this.dataStorage.put(kv);
+                    this.storageEngine.put(kv);
                     break;
                 case GET:
-                    this.dataStorage.get(kv);
+                    this.storageEngine.get(kv);
                     break;
                 case DELETE:
-                    this.dataStorage.delete(kv);
+                    this.storageEngine.delete(kv);
                     break;
                 case BATCH_PUT:
-                    this.dataStorage.batchPut(kvs);
+                    this.storageEngine.batchPut(kvs);
                     break;
                 case BATCH_GET:
-                    this.dataStorage.batchGet(kvs);
+                    this.storageEngine.batchGet(kvs);
                     break;
                 case BATCH_DELETE:
                     break;
@@ -84,26 +78,18 @@ public class ChunkImpl implements Chunk {
         responseFuture.complete(new ResponseCommand());
     }
 
-    private ConcurrentHashMap<byte[], byte[]> memCache = new ConcurrentHashMap<>();
-    private ScheduledExecutorService flushExecutor = Executors.newSingleThreadScheduledExecutor();
 
     @Override
     public void init() {
-        this.dataStorage = new DefaultDataStorage(config,trp);
-        this.logStorage = new DefaultLogStorage(config,trp);
-        // 启动定时刷盘任务
-        flushExecutor.scheduleAtFixedRate(() -> {
-            synchronized (memCache) {
-                dataStorage.batchPut(convertCacheToKvs());
-                memCache.clear();
+        this.storageEngine = new DefaultStorageEngine(config, chunkId,trp,trpNode);
+        // 注册复制事件监听
+        storageEngine.registerReplicationListener(new ReplicationEventListener() {
+            @Override
+            public void onLogAppend(LogEntry entry) {
+                // 触发日志复制到从节点,todo 这里应是触发一次
+                replicationTasks.forEach(timerTask -> timerTask.start(100));
             }
-        }, 50, 50, TimeUnit.MILLISECONDS);
-    }
-
-    private Kv[] convertCacheToKvs() {
-        ConcurrentHashMap<byte[], byte[]> memCache = this.memCache;
-        // todo 转换为Kv[] 存储到 logStorage 和 dataStorage
-        return new Kv[0];
+        });
     }
 
     @Override
@@ -155,7 +141,7 @@ public class ChunkImpl implements Chunk {
 
     @Override
     public LogStorage getLogStorage() {
-        return this.logStorage;
+        return this.storageEngine.getLogStorage();
     }
 
     @Override
@@ -180,6 +166,6 @@ public class ChunkImpl implements Chunk {
 
     @Override
     public Iterable<LogEntry> iterateLogs() {
-        return this.logStorage.iterateLogs();
+        return this.storageEngine.getLogStorage().iterateLogs();
     }
 }
