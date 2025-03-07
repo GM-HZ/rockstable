@@ -6,13 +6,13 @@ import cn.gm.light.rtable.core.config.Config;
 import cn.gm.light.rtable.entity.Kv;
 import cn.gm.light.rtable.entity.TRP;
 import cn.gm.light.rtable.utils.LongToByteArray;
+import cn.gm.light.rtable.utils.Pair;
 import lombok.extern.slf4j.Slf4j;
-import org.rocksdb.Options;
-import org.rocksdb.RocksDB;
-import org.rocksdb.RocksDBException;
-import org.rocksdb.RocksIterator;
+import org.rocksdb.*;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -79,14 +79,15 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
 
 
     @Override
-    public void put(Kv kv) {
+    public boolean put(Kv kv) {
         this.lock.lock();
         try {
             byte[] key = kv.getKeyBytes();
             byte[] value = kv.getValueBytes();
             logDB.put(key, value);
+            return true;
         } catch (RocksDBException e) {
-            throw new RuntimeException(e);
+            return false;
         } finally {
             this.lock.unlock();
         }
@@ -110,18 +111,76 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
     }
 
     @Override
-    public void batchPut(Kv[] kv) {
+    public byte[] get(byte[] k) {
+        this.lock.lock();
+        try {
+            return logDB.get(k);
+        }catch (RocksDBException e) {
+            throw new RuntimeException(e);
+        }finally {
+            this.lock.unlock();
+        }
+    }
+
+    @Override
+    public boolean put(Pair<byte[], byte[]> kv) {
+        this.lock.lock();
+        try {
+            logDB.put(kv.getKey(), kv.getValue());
+            return true;
+        }catch (RocksDBException e) {
+            log.error("Failed to put key-value pair", e);
+            return false;
+        }finally {
+            this.lock.unlock();
+        }
+    }
+
+    @Override
+    public boolean delete(byte[] k) {
+        return false;
+    }
+
+    @Override
+    public boolean batchPut(List<Pair<byte[], byte[]>> kvs) {
+        this.lock.lock();
+        try(WriteBatch batch = new WriteBatch()) {
+            // 填充批量数据
+            for (Pair<byte[], byte[]> entry : kvs) {
+                batch.put(entry.getKey(), entry.getValue());
+            }
+            // 原子提交
+            logDB.write(new org.rocksdb.WriteOptions(), batch);
+            return true;
+        } catch (RocksDBException e) {
+            log.error("Failed to put key-value pair", e);
+            return false;
+        } finally {
+            this.lock.unlock();
+        }
 
     }
 
     @Override
-    public void batchGet(Kv[] kv) {
-
+    public List<Pair<byte[], byte[]>> batchGet(List<byte[]> keys) {
+        this.lock.lock();
+        try {
+            List<Pair<byte[], byte[]>> results = new ArrayList<>(keys.size());
+            for (byte[] key : keys) {
+                byte[] value = logDB.get(key);
+                results.add(new Pair<>(key, value));
+            }
+            return results;
+        } catch (RocksDBException e) {
+            throw new RuntimeException("Batch get failed", e);
+        } finally {
+            this.lock.unlock();
+        }
     }
 
     @Override
-    public void batchDelete(Kv[] key) {
-
+    public boolean batchDelete(List<byte[]> k) {
+        return false;
     }
 
     @Override

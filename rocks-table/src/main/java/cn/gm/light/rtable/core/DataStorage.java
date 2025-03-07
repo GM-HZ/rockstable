@@ -1,6 +1,9 @@
 package cn.gm.light.rtable.core;
 
 import cn.gm.light.rtable.entity.Kv;
+import cn.gm.light.rtable.utils.Pair;
+
+import java.util.List;
 
 /**
  * @author 明溪
@@ -11,15 +14,17 @@ import cn.gm.light.rtable.entity.Kv;
  */
 public interface DataStorage extends LifeCycle {
 
-    void put(Kv kv);
-
+    boolean put(Kv kv);
     byte[] get(Kv kv);
-
     void delete(Kv kv);
 
-    void batchPut(Kv[] kv);
 
-    void batchGet(Kv[] kv);
+    byte[] get(byte[] k);
+    boolean put(Pair<byte[], byte[]> kv);
+    boolean delete(byte[] k);
+    boolean batchPut(List<Pair<byte[], byte[]>> kvs);
+    List<Pair<byte[], byte[]>> batchGet(List<byte[]> k);
+    boolean batchDelete(List<byte[]> k);
 
-    void batchDelete(Kv[] key);
+
 }

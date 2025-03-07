@@ -27,7 +27,6 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 @Slf4j
 public class DefaultLogStorage implements LogStorage{
-
     private TRP trp;
     private final String dataDir;
     private final ReentrantLock lock = new ReentrantLock();
