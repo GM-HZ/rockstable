@@ -16,6 +16,7 @@ import com.lmax.disruptor.RingBuffer;
 import com.lmax.disruptor.dsl.Disruptor;
 import com.lmax.disruptor.dsl.ProducerType;
 import lombok.extern.slf4j.Slf4j;
+import org.rocksdb.*;
 
 import java.util.*;
 import java.util.concurrent.*;
@@ -26,12 +27,11 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.zip.CRC32;
 
 
-
 @Slf4j
-public class DefaultStorageEngine implements StorageEngine {
+public class ShardStorageEngine implements StorageEngine {
     private final List<ReplicationEventListener> replicationListeners = new CopyOnWriteArrayList<>();
     private final DefaultDataStorage dataStorage;
-    private final DefaultLogStorage logStorage;
+    private final DefaultShardLogStorage shardLogStorage;
     private final TRP trp;
     private final TrpNode trpNode;
     private final Config config;
@@ -55,6 +55,11 @@ public class DefaultStorageEngine implements StorageEngine {
     private final RingBuffer<LogEntryEvent> ringBuffer;
     private static final int BUFFER_SIZE = 1024 * 1024; // 调整为2的幂次方
 
+    // 在类定义中添加列族管理
+    private final ColumnFamilyHandle[] shardCfHandles = new ColumnFamilyHandle[shardCount];
+    private final ColumnFamilyDescriptor[] shardCfDescriptors = new ColumnFamilyDescriptor[shardCount];
+
+
     // Disruptor事件类
     private static class LogEntryEvent {
         LogEntry value;
@@ -65,10 +70,12 @@ public class DefaultStorageEngine implements StorageEngine {
     private static class MemTableShard {
         final AtomicReference<ConcurrentSkipListMap<byte[], byte[]>> activeMap;
         final AtomicReference<ConcurrentSkipListMap<byte[], byte[]>> immutableMap;
+        final ColumnFamilyHandle cfHandle; // 新增列族句柄
 
-        MemTableShard() {
+        MemTableShard(ColumnFamilyHandle cfHandle) {
             activeMap = new AtomicReference<>(new ConcurrentSkipListMap<>(Bytes.BYTES_COMPARATOR));
             immutableMap = new AtomicReference<>(null);
+            this.cfHandle = cfHandle;
         }
     }
 
@@ -80,15 +87,13 @@ public class DefaultStorageEngine implements StorageEngine {
     private final LongAdder writeRequests = new LongAdder();
     private final LongAdder bloomFilterHits = new LongAdder();
 
-    public DefaultStorageEngine(Config config, String chunkId, TRP trp, TrpNode trpNode) {
+    public ShardStorageEngine(Config config, String chunkId, TRP trp, TrpNode trpNode) {
         // 初始化分片锁
         this.shardLocks = new ReentrantLock[shardCount];
         for(int i=0; i<shardCount; i++){
             shardLocks[i] = new ReentrantLock();
         }
-        for (int i = 0; i < shardCount; i++) {
-            memTableShards[i] = new MemTableShard();  // 初始化新结构
-        }
+
         this.bloomFilter = BloomFilter.create(Funnels.byteArrayFunnel(), 1000000, 0.01);
         this.circularBuffer = new CircularBuffer<>(bufferSize);
         this.lruCache = new LinkedHashMap<byte[], byte[]>(cacheSize, 0.75f, true) {
@@ -101,7 +106,7 @@ public class DefaultStorageEngine implements StorageEngine {
         this.trp = trp;
         this.trpNode = trpNode;
         this.dataStorage = new DefaultDataStorage(config, trp);
-        this.logStorage = new DefaultLogStorage(config, trp);
+
         // Disruptor初始化
         this.disruptor = new Disruptor<>(
                 LogEntryEvent::new,
@@ -115,6 +120,28 @@ public class DefaultStorageEngine implements StorageEngine {
         disruptor.handleEventsWith(this::batchCommitHandler);
         this.ringBuffer = disruptor.start();
 
+
+        // 初始化列族
+        List<ColumnFamilyDescriptor> cfDescriptors = new ArrayList<>();
+        for (int i = 0; i < shardCount; i++) {
+            shardCfDescriptors[i] = new ColumnFamilyDescriptor(
+                    ("shard_"+i).getBytes(),
+                    new ColumnFamilyOptions()
+                            .setCompressionType(CompressionType.LZ4_COMPRESSION)
+                            .optimizeLevelStyleCompaction()
+            );
+            cfDescriptors.add(shardCfDescriptors[i]);
+        }
+
+        // 使用同一RocksDB实例打开所有列族
+        List<ColumnFamilyHandle> handles = new ArrayList<>();
+        this.shardLogStorage = new DefaultShardLogStorage(config, trp,cfDescriptors,handles);
+        // 保存列族句柄
+        for (int i = 0; i < shardCount; i++) {
+            shardCfHandles[i] = handles.get(i);
+            memTableShards[i] = new MemTableShard(shardCfHandles[i]); // 传入列族句柄
+        }
+
         startFlushTask();
         startBatchCommitTask();
     }
@@ -122,7 +149,7 @@ public class DefaultStorageEngine implements StorageEngine {
     // 消费者处理逻辑
     private void batchCommitHandler(LogEntryEvent event, long sequence, boolean endOfBatch) {
         if (event.value != null) {
-            Long append = this.logStorage.append(new LogEntry[]{event.value});
+//            Long append = this.shardLogStorage.append(new LogEntry[]{event.value});
         }
     }
     private final ScheduledExecutorService flushExecutor = Executors.newSingleThreadScheduledExecutor();
@@ -139,17 +166,6 @@ public class DefaultStorageEngine implements StorageEngine {
             ringBuffer.publish(sequence);
         }
         return sequence; // 返回序列号作为日志ID
-//       bufferLock.lock();
-//        try {
-//            circularBuffer.add(logEntry);
-//            bufferIndex.incrementAndGet();
-//            if (bufferIndex.get() % bufferSize == 0) {
-//                batchCommitExecutor.submit(this::batchCommitLogs);
-//            }
-//        } finally {
-//            bufferLock.unlock();
-//        }
-//        return this.logStorage.append(new LogEntry[]{logEntry});
     }
 
     private void batchCommitLogs() {
@@ -167,7 +183,7 @@ public class DefaultStorageEngine implements StorageEngine {
             bufferLock.unlock();
         }
         if (!batch.isEmpty()) {
-            this.logStorage.append(batch.toArray(new LogEntry[0]));
+//            this.shardLogStorage.append(batch.toArray(new LogEntry[0]));
         }
     }
 
@@ -194,7 +210,9 @@ public class DefaultStorageEngine implements StorageEngine {
             shardedBatch.forEach((shardIndex, batch) -> {
                 shardLocks[shardIndex].lock();
                 try {
-                    ConcurrentSkipListMap<byte[], byte[]> shard = memTableShards[shardIndex].activeMap.get();
+                    MemTableShard memTableShard = memTableShards[shardIndex];
+                    shardLogStorage.append(memTableShard.cfHandle,batch.toArray(new LogEntry[0]));
+                    ConcurrentSkipListMap<byte[], byte[]> shard = memTableShard.activeMap.get();
                     batch.forEach(kv -> {
                         shard.put(kv.getKeyBytes(), kv.getValueBytes());
                         bloomFilter.put(kv.getKeyBytes());
@@ -293,7 +311,9 @@ public class DefaultStorageEngine implements StorageEngine {
 
     @Override
     public LogStorage getShardLogStorage() {
-        return this.logStorage;
+
+//        return this.shardLogStorage;
+        return null;
     }
 
     private void notifyReplicationListeners(LogEntry entry) {

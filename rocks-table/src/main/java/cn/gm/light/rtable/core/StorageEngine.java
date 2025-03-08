@@ -26,5 +26,5 @@ public interface StorageEngine {
 
     void registerReplicationListener(ReplicationEventListener replicationEventListener);
 
-    LogStorage getLogStorage();
+    LogStorage getShardLogStorage();
 }

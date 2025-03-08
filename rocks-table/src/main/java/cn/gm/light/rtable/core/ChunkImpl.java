@@ -141,7 +141,7 @@ public class ChunkImpl implements Chunk {
 
     @Override
     public LogStorage getLogStorage() {
-        return this.storageEngine.getLogStorage();
+        return this.storageEngine.getShardLogStorage();
     }
 
     @Override
@@ -166,6 +166,6 @@ public class ChunkImpl implements Chunk {
 
     @Override
     public Iterable<LogEntry> iterateLogs() {
-        return this.storageEngine.getLogStorage().iterateLogs();
+        return this.storageEngine.getShardLogStorage().iterateLogs();
     }
 }
