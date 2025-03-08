@@ -21,6 +21,8 @@ public class Config {
     private int nodePort;
 
     private int pdPort;
+    // 内存分片数量
+    private Integer memoryShardNum;
 
     private Endpoint pdEndpoint;
 }

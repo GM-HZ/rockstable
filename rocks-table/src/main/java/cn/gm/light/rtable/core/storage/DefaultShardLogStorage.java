@@ -75,9 +75,6 @@ public class DefaultShardLogStorage {
         return shardStoreFactory.getStore(shardId);
     }
 
-    public void start() {
-
-    }
     public void stop() {
         if (logDB != null) {
             try {
