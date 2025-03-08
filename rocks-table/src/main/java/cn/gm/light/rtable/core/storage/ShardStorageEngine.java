@@ -348,10 +348,6 @@ public class ShardStorageEngine implements StorageEngine {
         }, 1000, 1000, TimeUnit.MILLISECONDS);
     }
 
-    private void startBatchCommitTask() {
-        batchCommitExecutor.scheduleAtFixedRate(this::batchCommitLogs, 100, 100, TimeUnit.MILLISECONDS);
-    }
-
     private int getShardIndex(byte[] key) {
         return Math.abs(Arrays.hashCode(key)) % shardCount;
     }
