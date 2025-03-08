@@ -20,7 +20,9 @@ public interface DataStorage extends LifeCycle {
 
 
     byte[] get(byte[] k);
-    boolean put(Pair<byte[], byte[]> kv);
+
+    boolean put(byte[] k, byte[] v);
+
     boolean delete(byte[] k);
     boolean batchPut(List<Pair<byte[], byte[]>> kvs);
     List<Pair<byte[], byte[]>> batchGet(List<byte[]> k);

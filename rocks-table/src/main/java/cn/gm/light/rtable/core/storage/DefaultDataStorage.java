@@ -123,10 +123,10 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
     }
 
     @Override
-    public boolean put(Pair<byte[], byte[]> kv) {
+    public boolean put(byte[] k, byte[] v) {
         this.lock.lock();
         try {
-            logDB.put(kv.getKey(), kv.getValue());
+            logDB.put(k, v);
             return true;
         }catch (RocksDBException e) {
             log.error("Failed to put key-value pair", e);
