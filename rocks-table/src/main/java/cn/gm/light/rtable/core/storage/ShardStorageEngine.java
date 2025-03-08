@@ -22,6 +22,7 @@ import org.rocksdb.ColumnFamilyDescriptor;
 import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.ColumnFamilyOptions;
 import org.rocksdb.CompressionType;
+import sun.misc.Contended;
 
 import java.nio.ByteBuffer;
 import java.util.*;
@@ -53,10 +54,8 @@ public class ShardStorageEngine implements StorageEngine {
     private final TRP trp;
     private final Config config;
     // 布隆过滤器
-    private final BloomFilter bloomFilter;
+    private final BloomFilter[] bloomFilters;
 
-    // 替换原有LRU缓存定义
-    private final Cache<ByteBuffer, byte[]> lruCache;
     // 优化点：分片LRU缓存
     private final Cache<ByteBuffer, byte[]>[] shardedLruCaches;
 
@@ -75,7 +74,14 @@ public class ShardStorageEngine implements StorageEngine {
         final AtomicReference<ConcurrentSkipListMap<byte[], byte[]>> immutableMap;
         final ColumnFamilyHandle cfHandle; // 新增列族句柄
         // 使用填充字段避免伪共享
+        @Contended
         final LongAdder memoryCounter = new LongAdder(); // 新增分片内存计数器
+
+        // 在MemTableShard类中增加
+        @Contended
+        final LongAdder shardReadCount = new LongAdder();
+        @Contended
+        final LongAdder shardWriteCount = new LongAdder();
 
         MemTableShard(ColumnFamilyHandle cfHandle) {
             activeMap = new AtomicReference<>(new ConcurrentSkipListMap<>(Bytes.BYTES_COMPARATOR));
@@ -111,14 +117,11 @@ public class ShardStorageEngine implements StorageEngine {
         }
         this.maxMemory = 256 * 1024 * 1024 * shardCount;
         this.cacheSize =  1024 * 1024;
-        this.bloomFilter = new ConcurrentBloomFilter(1024 * 1024 * 1024, 0.01);
+        this.bloomFilters = new BloomFilter[shardCount];
+        for(int i=0; i<shardCount; i++){
+            bloomFilters[i] = new ConcurrentBloomFilter(1024 * 1024 * 1024, 0.01);
+        }
 
-        this.lruCache = Caffeine.newBuilder()
-                .maximumSize(cacheSize)          // 最大容量
-                .expireAfterWrite(5, TimeUnit.MINUTES) // 写入后过期
-                .executor(Executors.newWorkStealingPool())
-                .recordStats()                // 开启统计信息（用于监控）
-                .build();
         // 初始化时按分片创建缓存
         this.shardedLruCaches = new Cache[shardCount];
         Arrays.setAll(shardedLruCaches, i ->
@@ -263,7 +266,7 @@ public class ShardStorageEngine implements StorageEngine {
         Set<byte[]> keys = batch.stream()
                 .map(Kv::getKeyBytes)
                 .collect(Collectors.toSet());
-        bloomFilter.addAll(keys);
+        bloomFilters[shardIndex].addAll(keys);
 
         // 2. 批量写入内存表
         // ConcurrentSkipListMap.put 是线程安全的
@@ -319,7 +322,7 @@ public class ShardStorageEngine implements StorageEngine {
             MemTableShard memShard = memTableShards[shardIndex];
             memShard.memoryCounter.add(-(removed.length + kv.getKeyBytes().length));
             shardedLruCaches[shardIndex].invalidate(ByteBuffer.wrap(kv.getKeyBytes()));
-            bloomFilter.add(kv.getKeyBytes());
+            bloomFilters[shardIndex].add(kv.getKeyBytes());
         }
         return removed != null;
     }
@@ -327,12 +330,12 @@ public class ShardStorageEngine implements StorageEngine {
     @Override
     public Boolean get(Kv kv) {
         readRequests.increment();
+        int shardIndex = getShardIndex(kv.getKeyBytes());
         // 布隆过滤器过滤
-        if (!bloomFilter.mightContain(kv.getKeyBytes())) {
+        if (!bloomFilters[shardIndex].mightContain(kv.getKeyBytes())) {
             return false;
         }
         bloomFilterHits.increment();
-        int shardIndex = getShardIndex(kv.getKeyBytes());
         ConcurrentSkipListMap<byte[], byte[]> shard = memTableShards[shardIndex].activeMap.get();
         ByteBuffer keyBuf = ByteBuffer.wrap(kv.getKeyBytes());
         byte[] bytes = shard.get(kv.getKeyBytes());
@@ -542,6 +545,13 @@ public class ShardStorageEngine implements StorageEngine {
     public void shutdown() {
         disruptor.shutdown();
         // 关闭其他资源...
+    }
+
+    // 新增热点检测方法
+    public MemTableShard detectHotShard() {
+        return Arrays.stream(memTableShards)
+                .max(Comparator.comparing(shard -> shard.shardReadCount.sum()))
+                .orElseGet(null);
     }
 
 }
