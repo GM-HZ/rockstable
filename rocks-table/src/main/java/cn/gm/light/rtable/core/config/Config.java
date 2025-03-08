@@ -25,4 +25,5 @@ public class Config {
     private Integer memoryShardNum;
 
     private Endpoint pdEndpoint;
+    private boolean enableAsyncWal;
 }

@@ -13,9 +13,8 @@ import cn.gm.light.rtable.utils.Pair;
 import cn.gm.light.rtable.utils.RtThreadFactory;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.hazelcast.core.Hazelcast;
-import com.hazelcast.core.HazelcastInstance;
-import com.lmax.disruptor.BlockingWaitStrategy;
+import com.github.benmanes.caffeine.cache.stats.CacheStats;
+import com.lmax.disruptor.SleepingWaitStrategy;
 import com.lmax.disruptor.dsl.Disruptor;
 import com.lmax.disruptor.dsl.ProducerType;
 import lombok.extern.slf4j.Slf4j;
@@ -24,13 +23,12 @@ import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.ColumnFamilyOptions;
 import org.rocksdb.CompressionType;
 
-
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.LongAdder;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.StampedLock;
 import java.util.stream.Collectors;
 
 
@@ -59,13 +57,15 @@ public class ShardStorageEngine implements StorageEngine {
 
     // 替换原有LRU缓存定义
     private final Cache<ByteBuffer, byte[]> lruCache;
+    // 优化点：分片LRU缓存
+    private final Cache<ByteBuffer, byte[]>[] shardedLruCaches;
 
     private final int cacheSize;
     private final int shardCount;
     private final int maxMemory; // 预设内存阈值
 
     // 新增内存分片锁优化
-    private ReentrantLock[] shardLocks;  // 每个分片独立锁
+    private StampedLock[] shardLocks;  // 每个分片独立锁
     // 在类定义中添加列族管理
     private final ColumnFamilyHandle[] shardCfHandles;
     private final ColumnFamilyDescriptor[] shardCfDescriptors;
@@ -74,6 +74,7 @@ public class ShardStorageEngine implements StorageEngine {
         final AtomicReference<ConcurrentSkipListMap<byte[], byte[]>> activeMap;
         final AtomicReference<ConcurrentSkipListMap<byte[], byte[]>> immutableMap;
         final ColumnFamilyHandle cfHandle; // 新增列族句柄
+        // 使用填充字段避免伪共享
         final LongAdder memoryCounter = new LongAdder(); // 新增分片内存计数器
 
         MemTableShard(ColumnFamilyHandle cfHandle) {
@@ -104,9 +105,9 @@ public class ShardStorageEngine implements StorageEngine {
 //        初始化分片
         this.shardCount = Objects.isNull(config.getMemoryShardNum()) ? Runtime.getRuntime().availableProcessors() * 2 : config.getMemoryShardNum();
         // 初始化分片锁
-        this.shardLocks = new ReentrantLock[shardCount];
+        this.shardLocks = new StampedLock[shardCount];
         for(int i=0; i<shardCount; i++){
-            shardLocks[i] = new ReentrantLock();
+            shardLocks[i] = new StampedLock();
         }
         this.maxMemory = 256 * 1024 * 1024 * shardCount;
         this.cacheSize =  1024 * 1024;
@@ -118,6 +119,36 @@ public class ShardStorageEngine implements StorageEngine {
                 .executor(Executors.newWorkStealingPool())
                 .recordStats()                // 开启统计信息（用于监控）
                 .build();
+        // 初始化时按分片创建缓存
+        this.shardedLruCaches = new Cache[shardCount];
+        Arrays.setAll(shardedLruCaches, i ->
+                Caffeine.newBuilder()
+                        // 权重计算（关键参数）
+                        .weigher((ByteBuffer key, byte[] value) -> {
+                            // ByteBuffer对象开销：12B头 + 4B容量字段 = 16B
+                            int keySize = 16 + key.remaining();
+                            // byte数组开销：12B头 + 4B长度 = 16B + 数据长度
+                            int valueSize = 16 + (value != null ? value.length : 0);
+                            // 总内存占用（按8字节对齐）
+                            return (keySize + valueSize + 7) & ~7;
+                        })
+                        // 容量控制（关键参数）
+                        .maximumWeight(maxMemory / shardCount / 2)
+                        // 过期策略
+                        .expireAfterAccess(30, TimeUnit.SECONDS)  // 30秒无访问淘汰
+                        .refreshAfterWrite(1, TimeUnit.SECONDS)   // 1秒后异步刷新
+                        // GC优化
+                        .weakKeys()             // 允许GC回收无引用的Key
+                        .softValues()           // 使用软引用存储Value
+                        // 并发优化
+                        .executor(Executors.newWorkStealingPool()) // 指定维护线程池
+                        .initialCapacity(1024)  // 初始哈希表容量
+                        // 监控统计
+                        .recordStats()          // 开启命中率统计
+                        // 淘汰监听（调试用）
+                        .removalListener((key, value, cause) ->
+                                log.debug("Removed {} due to {}", key, cause))
+                        .build());
 
         // 初始化wal分片
         this.shardCfHandles = new ColumnFamilyHandle[shardCount];
@@ -152,10 +183,10 @@ public class ShardStorageEngine implements StorageEngine {
                 });
         // 初始化 Disruptor
         disruptor = new Disruptor<>(ShardBatchEvent::new,
-                1024 * 1024,
+                32 * 1024,
                 RtThreadFactory.forThreadPool("Shard-Processor"),
                 ProducerType.MULTI,
-                new BlockingWaitStrategy());
+                new SleepingWaitStrategy(100, 1000));
         disruptor.handleEventsWith((event, sequence, endOfBatch) -> {
             try {
                 processShardBatch(event.shardIndex, event.batch);
@@ -192,14 +223,25 @@ public class ShardStorageEngine implements StorageEngine {
                     event.set(shardIndex, batch);
                 });
             });
-        }, businessExecutor);
+        }, asyncExecutor);
 
-        // 基于概率的主动内存检查
+        // 基于概率的主动内存检查，按照分片级别
         if (ThreadLocalRandom.current().nextDouble() < 0.3) { // 30%概率触发检查
             flushExecutor.execute(() -> {
-                if (getMemoryUsage() > 0.8 * maxMemory) {
-                    evictLRU();
-                    new FlushMemTables().run();
+                for (int i = 0; i < shardCount; i++) {
+                    if (memTableShards[i].memoryCounter.sum() > 0.8 * maxMemory / shardCount) {
+                        evictLRU(i);
+                        break;
+                    }
+                }
+                new FlushMemTables().run();
+                // 统计缓存效果（需定期执行）
+                for (int i = 0; i < shardedLruCaches.length; i++) {
+                    CacheStats stats = shardedLruCaches[i].stats();
+                    log.info("分片{} 命中率: {}/s, 淘汰数: {}/s",
+                            i,
+                            stats.hitRate() * 100,
+                            stats.evictionCount());
                 }
             });
         }
@@ -210,7 +252,11 @@ public class ShardStorageEngine implements StorageEngine {
     private void processShardBatch(int shardIndex, List<Kv> batch) {
         LogEntry[] array = getLogEntries(batch);
         // 0. 写入wal,内部封装了RocksDB，已经加锁了，暂时是同步的，可以增加异步逻辑
-        shardLogStorage.getShardLogStorage(shardIndex).append(array);
+        if (config.isEnableAsyncWal()){
+            shardLogStorage.getShardLogStorage(shardIndex).asyncAppend(array);
+        }else{
+            shardLogStorage.getShardLogStorage(shardIndex).append(array);
+        }
 
         MemTableShard shard = memTableShards[shardIndex];
         // 1. 批量更新BloomFilter
@@ -235,7 +281,7 @@ public class ShardStorageEngine implements StorageEngine {
                         kv -> ByteBuffer.wrap(kv.getKeyBytes()),
                         Kv::getValueBytes
                 ));
-        lruCache.putAll(cacheEntries);
+        shardedLruCaches[shardIndex].putAll(cacheEntries);
 
         // 异步操作通知
         asyncExecutor.execute(() -> {
@@ -272,7 +318,7 @@ public class ShardStorageEngine implements StorageEngine {
             // 更新内存计数器
             MemTableShard memShard = memTableShards[shardIndex];
             memShard.memoryCounter.add(-(removed.length + kv.getKeyBytes().length));
-            lruCache.invalidate(ByteBuffer.wrap(kv.getKeyBytes()));
+            shardedLruCaches[shardIndex].invalidate(ByteBuffer.wrap(kv.getKeyBytes()));
             bloomFilter.add(kv.getKeyBytes());
         }
         return removed != null;
@@ -292,7 +338,7 @@ public class ShardStorageEngine implements StorageEngine {
         byte[] bytes = shard.get(kv.getKeyBytes());
         if (bytes != null) {
             kv.setValue(bytes);
-            lruCache.put(keyBuf, bytes);
+            shardedLruCaches[shardIndex].put(keyBuf, bytes);
             return true;
         }
         // 再从immutableMap中获取
@@ -300,10 +346,10 @@ public class ShardStorageEngine implements StorageEngine {
         bytes = immutableMap.get(kv.getKeyBytes());
         if (bytes != null) {
             kv.setValue(bytes);
-            lruCache.put(keyBuf, bytes);
+            shardedLruCaches[shardIndex].put(keyBuf, bytes);
             return true;
         }
-        bytes = lruCache.getIfPresent(keyBuf);
+        bytes = shardedLruCaches[shardIndex].getIfPresent(keyBuf);
         if (bytes != null) {
             kv.setValue(bytes);
             return true;
@@ -311,7 +357,7 @@ public class ShardStorageEngine implements StorageEngine {
         bytes = this.dataStorage.get(kv);
         if (bytes != null) {
             kv.setValue(bytes);
-            lruCache.put(keyBuf, bytes);
+            shardedLruCaches[shardIndex].put(keyBuf, bytes);
             return true;
         }
         return false;
@@ -374,19 +420,23 @@ public class ShardStorageEngine implements StorageEngine {
                 int finalShardIndex = shardIndex;
                 Long lastMarkFlushIndex = null;
                 // 关键修改：加分片锁，缩小加锁范围
-                shardLocks[shardIndex].lock();
-                try {
-                    // 原子交换内存表
-                    if (shard.immutableMap.get() == null) {
-                        ConcurrentSkipListMap<byte[], byte[]> currentActive = shard.activeMap.get();
-                        if (shard.immutableMap.compareAndSet(null, currentActive)) {
-                            // 创建新内存表并异步处理旧数据
-                            shard.activeMap.set(new ConcurrentSkipListMap<>(Bytes.BYTES_COMPARATOR));
-                            lastMarkFlushIndex = shardLogStorage.getShardLogStorage(finalShardIndex).readLastLog().getIndex();
+                long stamp = shardLocks[shardIndex].tryOptimisticRead();
+                if (!shardLocks[shardIndex].validate(stamp)) {
+                    stamp = shardLocks[shardIndex].readLock();
+                    try {
+                        // 读取操作
+                        // 原子交换内存表
+                        if (shard.immutableMap.get() == null) {
+                            ConcurrentSkipListMap<byte[], byte[]> currentActive = shard.activeMap.get();
+                            if (shard.immutableMap.compareAndSet(null, currentActive)) {
+                                // 创建新内存表并异步处理旧数据
+                                shard.activeMap.set(new ConcurrentSkipListMap<>(Bytes.BYTES_COMPARATOR));
+                                lastMarkFlushIndex = shardLogStorage.getShardLogStorage(finalShardIndex).readLastLog().getIndex();
+                            }
                         }
+                    } finally {
+                        shardLocks[shardIndex].unlockRead(stamp);
                     }
-                }finally {
-                    shardLocks[shardIndex].unlock();
                 }
                 Long finalLastMarkFlushIndex = lastMarkFlushIndex;
                 futures.add(CompletableFuture.runAsync(() -> {
@@ -427,9 +477,9 @@ public class ShardStorageEngine implements StorageEngine {
         return total;
     }
 
-    private void evictLRU() {
+    private void evictLRU(int shardIndex) {
         long currentUsage = getMemoryUsage(); // 初始计算
-        Iterator<Map.Entry<ByteBuffer, byte[]>> iterator = lruCache.asMap().entrySet().iterator();
+        Iterator<Map.Entry<ByteBuffer, byte[]>> iterator = shardedLruCaches[shardIndex].asMap().entrySet().iterator();
 
         while (iterator.hasNext() && currentUsage > maxMemory) {
             Map.Entry<ByteBuffer, byte[]> entry = iterator.next();
@@ -437,15 +487,9 @@ public class ShardStorageEngine implements StorageEngine {
             ByteBuffer key = entry.getKey();
             currentUsage -= (key.array().length + entry.getValue().length);
 
-            int shardIndex = getShardIndex(key.array());
             ConcurrentSkipListMap<byte[], byte[]> shard = memTableShards[shardIndex].activeMap.get();
             shard.remove(key.array());
             iterator.remove();
-        }
-
-        // 最终同步实际值（可选）
-        if (currentUsage <= maxMemory) {
-            getMemoryUsage();
         }
     }
 
