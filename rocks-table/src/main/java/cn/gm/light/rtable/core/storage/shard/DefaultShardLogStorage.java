@@ -72,7 +72,7 @@ public class DefaultShardLogStorage {
             for (ColumnFamilyDescriptor descriptor : allDescriptors) {
                 String cfName = new String(descriptor.getName());
                 if (!existingCFs.contains(descriptor.getName())) {
-                    log.info("Creating new column family: {}", cfName);
+                    log.debug("Creating new column family: {}", cfName);
                 }
             }
 
@@ -118,6 +118,8 @@ public class DefaultShardLogStorage {
                 try {
                     // 显式关闭（替代 try-with-resources）
                     logDB.close();
+                }catch (Exception e) {
+                    log.error("Failed to close RocksDB", e);
                 } finally {
                     logDB = null;
                     columnFamilyHandles.forEach(ColumnFamilyHandle::close);

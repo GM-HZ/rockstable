@@ -540,8 +540,13 @@ public class ShardStorageEngine implements StorageEngine {
                     shard.immutableMap.set(null); // 重置状态
                 }, flushExecutor));
             }
-            // 等待所有分片完成
-            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            // 使用 CompletableFuture.allOf 并设置超时
+            try {
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                        .get(5, TimeUnit.SECONDS); // 设置超时避免永久阻塞
+            } catch (java.util.concurrent.TimeoutException | InterruptedException | ExecutionException e) {
+                log.warn("Flush task timeout or interrupted", e);
+            }
         }
     }
 
