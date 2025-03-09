@@ -195,6 +195,27 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
 
     @Override
     public void stop() {
-        db.close();
+        if (db != null) {
+            try {
+                // 1. 先同步所有写入
+                db.syncWal(); // 强制同步WAL日志
+                db.flush(new FlushOptions().setWaitForFlush(true)); // 强制刷新所有MemTable
+
+                // 2. 关闭列族句柄（关键补充）
+
+                // 3. 关闭数据库实例（原有代码增强）
+                try {
+                    // 显式关闭（替代 try-with-resources）
+                    db.close();
+                } finally {
+                    db = null;
+                    log.info("db closed successfully.");
+                }
+
+                log.info("db closed successfully.");
+            } catch (Exception e) {
+                log.error("Failed to close db", e);
+            }
+        }
     }
 }

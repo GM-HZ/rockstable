@@ -643,6 +643,8 @@ public class ShardStorageEngine implements StorageEngine {
                     log.info("Disruptor shutdown completed");
                 } catch (TimeoutException e) {
                     log.warn("Disruptor shutdown timeout", e);
+                }finally {
+                    disruptor.shutdown();
                 }
             }
 
@@ -700,6 +702,8 @@ public class ShardStorageEngine implements StorageEngine {
                 log.info("{} executor shutdown complete. Skipped tasks: {}", name, skipped.size());
             } catch (Exception e) {
                 log.error("{} executor shutdown failed", name, e);
+            }finally {
+                executor.shutdown();
             }
         }
     }
