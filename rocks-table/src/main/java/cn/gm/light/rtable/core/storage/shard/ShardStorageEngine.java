@@ -261,7 +261,7 @@ public class ShardStorageEngine implements StorageEngine {
 
     // 在 disruptor.handleEventsWith() 中的处理器
     private void processShardBatch(int shardIndex, List<Kv> batch) {
-        System.out.println("分片 "+ shardIndex + "收到批量写入请求,"+ batch.size());
+        log.debug("分片{} 收到批量写入请求,{}", shardIndex, batch.size());
         LogEntry[] array = getLogEntries(batch);
         // 0. 写入wal,内部封装了RocksDB，已经加锁了，暂时是同步的，可以增加异步逻辑
         if (config.isEnableAsyncWal()){

@@ -33,6 +33,7 @@ public class ShardStorageEngineBenchmark {
 
     @Setup(Level.Trial)
     public void setup() {
+        log.info("ShardStorageEngineBenchmark setup start...");
         // 初始化存储引擎（模拟配置）
         Config config = new Config();
         config.setMemoryShardNum(shardCount);
@@ -58,6 +59,7 @@ public class ShardStorageEngineBenchmark {
     @TearDown(Level.Trial)
     public void tearDown() {
         try {
+            log.info("StorageEngine shutdown start...");
             storageEngine.shutdown(); // 关闭存储引擎
         } catch (TimeoutException e) {
             log.error("StorageEngine shutdown failed", e);
@@ -91,7 +93,7 @@ public class ShardStorageEngineBenchmark {
             kv.setValue(valueBytes);
             batch[i] = kv;
         }
-        System.out.println("Write Throughput: " + batch.length);
+       log.debug("Write batch: {}", batch.length);
         storageEngine.batchPut(batch);
         blackhole.consume(batch); // 避免JIT优化忽略结果
     }
@@ -123,5 +125,14 @@ public class ShardStorageEngineBenchmark {
         kv.setColumn(keyParts[2]);
         boolean exists = storageEngine.get(kv);
         blackhole.consume(exists);
+    }
+
+    @Benchmark
+    public void mixedReadWrite(Blackhole blackhole) {
+        if (ThreadLocalRandom.current().nextDouble() < 0.7) {
+            readHitCache(blackhole);
+        } else {
+            writeThroughput(blackhole);
+        }
     }
 }
