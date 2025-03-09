@@ -305,7 +305,7 @@ public class ShardStorageEngine implements StorageEngine {
                 // 统计缓存效果（需定期执行）
                 for (int i = 0; i < shardedLruCaches.length; i++) {
                     CacheStats stats = shardedLruCaches[i].stats();
-                    log.info("分片{} 命中率: {}/s, 淘汰数: {}/s",
+                    log.debug("分片{} 命中率: {}/s, 淘汰数: {}/s",
                             i,
                             stats.hitRate() * 100,
                             stats.evictionCount());
