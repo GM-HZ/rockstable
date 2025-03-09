@@ -70,6 +70,10 @@ public class DefaultShardLogStorage {
     private void initRocksDB() throws RocksDBException {
         RocksDB.loadLibrary();
         if (columnFamilyDescriptors != null && columnFamilyHandles != null) {
+
+            // 获取现有列族列表
+            List<byte[]> existingCFs = RocksDB.listColumnFamilies(new Options(), dataDir);
+
             // 将默认列族作为第一个列族
             List<ColumnFamilyDescriptor> allDescriptors = new ArrayList<>();
             List<ColumnFamilyHandle> allHandles = new ArrayList<>();
@@ -77,17 +81,20 @@ public class DefaultShardLogStorage {
             // 添加默认列族
             allDescriptors.add(new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY));
 
-            // 添加分片列族
-            allDescriptors.addAll(columnFamilyDescriptors);
+            // 添加历史分片列族
+            existingCFs.forEach(existingCF -> {
+                String cfName = new String(existingCF);
+                if (!cfName.equals("default")) {
+                    allDescriptors.add(new ColumnFamilyDescriptor(existingCF));
+                }
+            });
 
-            // 获取现有列族列表
-            List<byte[]> existingCFs = RocksDB.listColumnFamilies(new Options(), dataDir);
-
-            // 确保所有列族都存在
-            for (ColumnFamilyDescriptor descriptor : allDescriptors) {
+            // 添加新分片列族
+            for (ColumnFamilyDescriptor descriptor : columnFamilyDescriptors) {
                 String cfName = new String(descriptor.getName());
                 if (!existingCFs.contains(descriptor.getName())) {
                     log.debug("Creating new column family: {}", cfName);
+                    allDescriptors.add(descriptor);
                 }
             }
 
@@ -100,6 +107,7 @@ public class DefaultShardLogStorage {
             options.setMaxBackgroundJobs(16);
             // 调整WAL文件大小
             options.setMaxTotalWalSize(512 * 1024 * 1024L);
+//            allDescriptors 必须包含历史所有的分片
             logDB = RocksDB.open(options, dataDir, allDescriptors, allHandles);
 
             // 调整列族句柄映射关系，将默认列族映射到索引 0，然后去除掉默认列族
