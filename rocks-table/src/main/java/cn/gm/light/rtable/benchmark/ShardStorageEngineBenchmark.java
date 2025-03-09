@@ -39,7 +39,7 @@ public class ShardStorageEngineBenchmark {
                 .isLeader(true)
                 .term(0)
                 .build();
-        storageEngine = new ShardStorageEngine(config, "chunk_1", trp);
+        storageEngine = new ShardStorageEngine(config, "chunk_test_table_0_0", trp);
 
         // 生成测试键（10万条数据，覆盖不同分片）
         int dataSize = 100_000;

@@ -7,11 +7,9 @@ import cn.gm.light.rtable.entity.Kv;
 import cn.gm.light.rtable.entity.TRP;
 import com.alibaba.fastjson2.JSON;
 import lombok.extern.slf4j.Slf4j;
-import org.junit.Before;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import static org.mockito.Mockito.mock;
 
 /**
  * @author 明溪
@@ -23,11 +21,6 @@ import static org.mockito.Mockito.mock;
 @Slf4j
 public class ShardStorageEngineTest {
     StorageEngine engine;
-
-    @Before
-    public void init() {
-
-    }
 
     @Test
     public void testPut() {

@@ -6,8 +6,8 @@ import cn.gm.light.rtable.utils.BloomFilter;
 import cn.gm.light.rtable.utils.ConcurrentBloomFilter;
 import com.alibaba.fastjson2.JSON;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author 明溪
@@ -17,7 +17,6 @@ import static org.junit.Assert.assertTrue;
  * @date 2025/3/9 10:45:17
  */
 public class Test {
-    @org.junit.Test
     public void test() {
         Kv k = new Kv();
         k.setFamily("f");
@@ -37,7 +36,6 @@ public class Test {
 
     }
 
-    @org.junit.Test
     public void test1() {
         BloomFilter bloomFilter = new ConcurrentBloomFilter(1000000, 0.01);
         for (int i = 0; i < 10; i++) {
@@ -49,7 +47,7 @@ public class Test {
         }
     }
     // 测试用例
-    @org.junit.Test
+
     public void testBloomFilter() {
         BloomFilter filter = new ConcurrentBloomFilter(1000000, 0.01);
 
@@ -60,7 +58,6 @@ public class Test {
         assertFalse(filter.mightContain("key2".getBytes())); // 应返回false
     }
     // 测试边界值
-    @org.junit.Test
     public void testNegativeHash() {
         BloomFilter filter = new ConcurrentBloomFilter(1000, 0.01);
         // 生成强制负哈希值的测试数据

@@ -84,7 +84,9 @@ public class DefaultShardLogStorage {
                 }
             }
 
-            DBOptions options = new DBOptions().setCreateIfMissing(true).setCreateMissingColumnFamilies(true);
+            DBOptions options = new DBOptions()
+                    .setCreateIfMissing(true)
+                    .setCreateMissingColumnFamilies(true);
             logDB = RocksDB.open(options, dataDir, allDescriptors, allHandles);
 
             // 调整列族句柄映射关系，将默认列族映射到索引 0，然后去除掉默认列族

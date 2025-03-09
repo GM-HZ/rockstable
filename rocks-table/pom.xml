@@ -16,7 +16,7 @@
         <fastjson.version>1.2.83</fastjson.version>
         <fastjson2.version>2.0.48</fastjson2.version>
         <lombok.version>1.18.30</lombok.version>
-        <jmh.version>1.36</jmh.version>
+        <jmh.version>1.21</jmh.version>
     </properties>
     <dependencies>
 
@@ -64,6 +64,7 @@
             <groupId>org.openjdk.jmh</groupId>
             <artifactId>jmh-generator-annprocess</artifactId>
             <version>${jmh.version}</version>
+            <scope>provided</scope>
         </dependency>
 
 
@@ -110,27 +111,58 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- Mockito -->
-        <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-core</artifactId>
-            <version>4.5.1</version>
-            <scope>test</scope>
-        </dependency>
+<!--        &lt;!&ndash; Mockito &ndash;&gt;-->
+<!--        <dependency>-->
+<!--            <groupId>org.mockito</groupId>-->
+<!--            <artifactId>mockito-core</artifactId>-->
+<!--            <version>4.5.1</version>-->
+<!--            <scope>test</scope>-->
+<!--        </dependency>-->
 
         <!-- 兼容JUnit 4的引擎（可选） -->
-        <dependency>
-            <groupId>org.junit.vintage</groupId>
-            <artifactId>junit-vintage-engine</artifactId>
-            <version>5.8.2</version>
-            <scope>test</scope>
-        </dependency>
     </dependencies>
+    <repositories>
+        <repository>
+            <id>nexus-aliyun</id>
+            <url>http://maven.aliyun.com/nexus/content/groups/public/</url>
+        </repository>
+    </repositories>
+
     <build>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>2.22.2</version>
+                <configuration>
+                    <skipTests>true</skipTests> <!-- 关闭测试执行 -->
+                    <skip>true</skip> <!-- 同时跳过测试编译 -->
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.2.4</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>org.openjdk.jmh.Main</mainClass>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.8.1</version>
                 <configuration>
                     <source>8</source>
                     <target>8</target>

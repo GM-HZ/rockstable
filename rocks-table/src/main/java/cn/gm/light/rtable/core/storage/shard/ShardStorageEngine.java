@@ -28,6 +28,7 @@ import org.rocksdb.CompressionType;
 import sun.misc.Contended;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
@@ -165,7 +166,7 @@ public class ShardStorageEngine implements StorageEngine {
             ColumnFamilyOptions columnFamilyOptions = new ColumnFamilyOptions()
                     .setCompressionType(CompressionType.LZ4_COMPRESSION)
                     .optimizeLevelStyleCompaction();
-            shardCfDescriptors[i] = new ColumnFamilyDescriptor(("shard_"+i).getBytes(), columnFamilyOptions);
+            shardCfDescriptors[i] = new ColumnFamilyDescriptor(("shard_"+i).getBytes(StandardCharsets.UTF_8), columnFamilyOptions);
             cfDescriptors.add(shardCfDescriptors[i]);
         }
 
@@ -293,7 +294,8 @@ public class ShardStorageEngine implements StorageEngine {
         Map<ByteBuffer, byte[]> cacheEntries = batch.stream()
                 .collect(Collectors.toMap(
                         kv -> ByteBuffer.wrap(kv.getKeyBytes()),
-                        Kv::getValueBytes
+                        Kv::getValueBytes,
+                        (oldVal, newVal) -> newVal
                 ));
         shardedLruCaches[shardIndex].putAll(cacheEntries);
 
