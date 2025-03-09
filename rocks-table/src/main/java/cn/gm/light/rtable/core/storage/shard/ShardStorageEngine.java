@@ -1,8 +1,11 @@
-package cn.gm.light.rtable.core.storage;
+package cn.gm.light.rtable.core.storage.shard;
 
 import cn.gm.light.rtable.core.LogStorage;
 import cn.gm.light.rtable.core.StorageEngine;
 import cn.gm.light.rtable.core.config.Config;
+import cn.gm.light.rtable.core.storage.DefaultDataStorage;
+import cn.gm.light.rtable.core.storage.ReplicationEventListener;
+import cn.gm.light.rtable.core.storage.shard.DefaultShardLogStorage;
 import cn.gm.light.rtable.core.storage.shard.ShardStore;
 import cn.gm.light.rtable.entity.Kv;
 import cn.gm.light.rtable.entity.LogEntry;
@@ -11,7 +14,6 @@ import cn.gm.light.rtable.utils.BloomFilter;
 import cn.gm.light.rtable.utils.ConcurrentBloomFilter;
 import cn.gm.light.rtable.utils.Pair;
 import cn.gm.light.rtable.utils.RtThreadFactory;
-import com.alibaba.fastjson2.JSON;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.stats.CacheStats;
@@ -269,6 +271,11 @@ public class ShardStorageEngine implements StorageEngine {
                 .collect(Collectors.toSet());
         bloomFilters[shardIndex].addAll(keys);
 
+        // 布隆过滤器过滤
+//        if (!bloomFilters[shardIndex].mightContain(batch.get(0).getKeyBytes())) {
+//            log.debug("BloomFilter过滤");
+//        }
+
         // 2. 批量写入内存表
         // ConcurrentSkipListMap.put 是线程安全的
         Map<byte[], byte[]> kvMap = batch.stream()
@@ -278,6 +285,9 @@ public class ShardStorageEngine implements StorageEngine {
                         (oldVal, newVal) -> newVal
                 ));
         shard.activeMap.get().putAll(kvMap);
+        if (shard.activeMap.get().containsKey(batch.get(0).getKeyBytes())){
+            log.debug("内存表过滤");
+        }
 
         // 3. 批量更新LRU缓存,lruCache 是线程安全的
         Map<ByteBuffer, byte[]> cacheEntries = batch.stream()
@@ -307,14 +317,7 @@ public class ShardStorageEngine implements StorageEngine {
         LogEntry[] array = batch.stream().map(kv -> {
             LogEntry logEntry = new LogEntry();
             logEntry.setTerm(term);
-          try {
-              log.info("日志条目：{}", JSON.toJSONString(logEntry));
-          }catch (Exception e){
-              log.error("日志条目：{}", e.getMessage(),e);
-          }
-            log.info("日志条目：{}", JSON.toJSONString(kv));
             logEntry.setCommand(kv);
-            log.info("日志条目：{}", JSON.toJSONString(logEntry));
             return logEntry;
         }).toArray(LogEntry[]::new);
         return array;
@@ -354,11 +357,13 @@ public class ShardStorageEngine implements StorageEngine {
         }
         // 再从immutableMap中获取
         ConcurrentSkipListMap<byte[], byte[]> immutableMap = memTableShards[shardIndex].immutableMap.get();
-        bytes = immutableMap.get(kv.getKeyBytes());
-        if (bytes != null) {
-            kv.setValue(bytes);
-            shardedLruCaches[shardIndex].put(keyBuf, bytes);
-            return true;
+        if (immutableMap != null) {
+            bytes = immutableMap.get(kv.getKeyBytes());
+            if (bytes != null) {
+                kv.setValue(bytes);
+                shardedLruCaches[shardIndex].put(keyBuf, bytes);
+                return true;
+            }
         }
         bytes = shardedLruCaches[shardIndex].getIfPresent(keyBuf);
         if (bytes != null) {

@@ -15,10 +15,7 @@ import java.io.Serializable;
  * @description TODO
  * @date 2025/3/3 19:17:59
  */
-@Builder
 @Data
-@NoArgsConstructor
-@AllArgsConstructor
 public class Kv implements Serializable {
     private String family;
     private String key;

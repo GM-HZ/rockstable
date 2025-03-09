@@ -1,7 +1,7 @@
 package cn.gm.light.rtable.benchmark;
 
 import cn.gm.light.rtable.core.config.Config;
-import cn.gm.light.rtable.core.storage.ShardStorageEngine;
+import cn.gm.light.rtable.core.storage.shard.ShardStorageEngine;
 import cn.gm.light.rtable.entity.Kv;
 import cn.gm.light.rtable.entity.TRP;
 import org.openjdk.jmh.annotations.*;
@@ -77,7 +77,12 @@ public class ShardStorageEngineBenchmark {
             String[] keyParts = getRandomTestKey();
             byte[] keyBytes = buildFullKey(keyParts);
             byte[] valueBytes = ("value_" + System.currentTimeMillis()).getBytes();
-            batch[i] = Kv.builder().family(keyParts[0]).key(keyParts[1]).column(keyParts[2]).value(valueBytes).build();
+            Kv kv = new Kv();
+            kv.setFamily(keyParts[0]);
+            kv.setKey(keyParts[1]);
+            kv.setColumn(keyParts[2]);
+            kv.setValue(valueBytes);
+            batch[i] = kv;
         }
         storageEngine.batchPut(batch);
         blackhole.consume(batch); // 避免JIT优化忽略结果
@@ -88,7 +93,10 @@ public class ShardStorageEngineBenchmark {
         // 构造读取请求（命中缓存）
         String[] keyParts = getRandomTestKey();
         byte[] keyBytes = buildFullKey(keyParts);
-        Kv kv = Kv.builder().family(keyParts[0]).key(keyParts[1]).column(keyParts[2]).value(null).build();
+        Kv kv = new Kv();
+        kv.setFamily(keyParts[0]);
+        kv.setKey(keyParts[1]);
+        kv.setColumn(keyParts[2]);
         boolean exists = storageEngine.get(kv);
         blackhole.consume(exists);
     }
@@ -101,7 +109,10 @@ public class ShardStorageEngineBenchmark {
                 "col_miss"
         };
         byte[] keyBytes = buildFullKey(keyParts);
-        Kv kv = Kv.builder().family(keyParts[0]).key(keyParts[1]).column(keyParts[2]).value(null).build();;
+        Kv kv = new Kv();
+        kv.setFamily(keyParts[0]);
+        kv.setKey(keyParts[1]);
+        kv.setColumn(keyParts[2]);
         boolean exists = storageEngine.get(kv);
         blackhole.consume(exists);
     }

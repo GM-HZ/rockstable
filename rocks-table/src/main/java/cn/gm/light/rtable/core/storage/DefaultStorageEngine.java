@@ -8,7 +8,6 @@ import cn.gm.light.rtable.entity.Kv;
 import cn.gm.light.rtable.entity.LogEntry;
 import cn.gm.light.rtable.entity.TRP;
 import cn.gm.light.rtable.utils.Pair;
-import com.alibaba.fastjson2.JSON;
 import com.google.common.hash.BloomFilter;
 import com.google.common.hash.Funnels;
 import com.lmax.disruptor.BlockingWaitStrategy;
@@ -346,11 +345,7 @@ public class DefaultStorageEngine implements StorageEngine {
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
         }, 1000, 1000, TimeUnit.MILLISECONDS);
     }
-    public Kv buildKv(byte[] key, byte[] value) {
-        String jsonString = JSON.toJSONString(key);
-        String[] split = jsonString.split("#");
-        return Kv.builder().family(split[0]).key(split[1]).column(split[2]).value(value).build();
-    }
+
 
     private void startBatchCommitTask() {
         batchCommitExecutor.scheduleAtFixedRate(this::batchCommitLogs, 100, 100, TimeUnit.MILLISECONDS);

@@ -1,4 +1,4 @@
-package cn.gm.light.rtable.core.storage;
+package cn.gm.light.rtable.core.storage.shard;
 
 import cn.gm.light.rtable.core.LogStorage;
 import cn.gm.light.rtable.core.ShardLogStorage;

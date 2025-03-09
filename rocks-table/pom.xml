@@ -16,8 +16,16 @@
         <fastjson.version>1.2.83</fastjson.version>
         <fastjson2.version>2.0.48</fastjson2.version>
         <lombok.version>1.18.30</lombok.version>
+        <jmh.version>1.36</jmh.version>
     </properties>
     <dependencies>
+
+        <!-- SLF4J 实现（例如 Logback） -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>1.2.11</version> <!-- 使用最新版本 -->
+        </dependency>
 
         <dependency>
             <groupId>org.rocksdb</groupId>
@@ -50,9 +58,13 @@
         <dependency>
             <groupId>org.openjdk.jmh</groupId>
             <artifactId>jmh-core</artifactId>
-            <version>1.35</version>
+            <version>${jmh.version}</version>
         </dependency>
-
+        <dependency>
+            <groupId>org.openjdk.jmh</groupId>
+            <artifactId>jmh-generator-annprocess</artifactId>
+            <version>${jmh.version}</version>
+        </dependency>
 
 
         <dependency>
@@ -122,6 +134,20 @@
                 <configuration>
                     <source>8</source>
                     <target>8</target>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <configuration>
+                    <executable>java</executable>
+                    <arguments>
+                        <argument>-classpath</argument>
+                        <classpath /> <!-- 自动使用项目构建的类路径 -->
+                        <argument>org.openjdk.jmh.Main</argument> <!-- JMH入口类 -->
+                        <argument>${benchmark.class}</argument> <!-- 用户指定的基准测试类 -->
+                    </arguments>
                 </configuration>
             </plugin>
         </plugins>

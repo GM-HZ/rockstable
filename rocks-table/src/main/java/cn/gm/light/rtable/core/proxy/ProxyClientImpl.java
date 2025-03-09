@@ -119,12 +119,15 @@ public class ProxyClientImpl implements ProxyClient , LifeCycle {
         }
         RequestCommand request = new RequestCommand();
         request.setCommandType(CommandType.Proxy2Node);
-        Kv build = Kv.builder().family(family).key(key).column(column).value(null).build();
+        Kv kv = new Kv();
+        kv.setFamily(family);
+        kv.setKey(key);
+        kv.setColumn(column);
         ProxyToNodeRequest proxy = ProxyToNodeRequest.builder()
                 .proxyId(proxyId)
                 .trp(trp)
                 .operation(CommonType.GET)
-                .kv(build)
+                .kv(kv)
                 .version(requestId.incrementAndGet())
                 .readOnly(true)
                 .build();
@@ -159,12 +162,16 @@ public class ProxyClientImpl implements ProxyClient , LifeCycle {
         }
         RequestCommand request = new RequestCommand();
         request.setCommandType(CommandType.Proxy2Node);
-        Kv build = Kv.builder().family(family).key(key).column(column).value(value).build();
+        Kv kv = new Kv();
+        kv.setFamily(family);
+        kv.setKey(key);
+        kv.setColumn(column);
+        kv.setValue(value);
         ProxyToNodeRequest proxy = ProxyToNodeRequest.builder()
                 .proxyId(proxyId)
                 .trp(trp)
                 .operation(CommonType.PUT)
-                .kv(build)
+                .kv(kv)
                 .version(requestId.incrementAndGet())
                 .readOnly(true)
                 .build();
