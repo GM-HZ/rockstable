@@ -91,6 +91,7 @@ public class ShardStorageEngineBenchmark {
             kv.setValue(valueBytes);
             batch[i] = kv;
         }
+        System.out.println("Write Throughput: " + batch.length);
         storageEngine.batchPut(batch);
         blackhole.consume(batch); // 避免JIT优化忽略结果
     }
