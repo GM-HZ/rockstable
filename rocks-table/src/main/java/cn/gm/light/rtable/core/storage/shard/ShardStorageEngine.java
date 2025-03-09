@@ -52,6 +52,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ShardStorageEngine implements StorageEngine {
     private AtomicBoolean isRunning = new AtomicBoolean(false);
+    private AtomicBoolean isFlushRunning = new AtomicBoolean(false);
     private final List<ReplicationEventListener> replicationListeners = new CopyOnWriteArrayList<>();
     private final DefaultDataStorage dataStorage;
     private final DefaultShardLogStorage shardLogStorage;
@@ -301,7 +302,7 @@ public class ShardStorageEngine implements StorageEngine {
                         break;
                     }
                 }
-                new FlushMemTables().run();
+//                new FlushMemTables().run();
                 // 统计缓存效果（需定期执行）
                 for (int i = 0; i < shardedLruCaches.length; i++) {
                     CacheStats stats = shardedLruCaches[i].stats();
@@ -483,7 +484,7 @@ public class ShardStorageEngine implements StorageEngine {
 //            内存充足时完全不需要执行刷盘动作
 //    仍然通过WAL保证数据安全
     private void startFlushTask() {
-        flushExecutor.scheduleAtFixedRate(new FlushMemTables(), 1000, 1000, TimeUnit.MILLISECONDS);
+        flushExecutor.scheduleAtFixedRate(new FlushMemTables(), 10000, 10000, TimeUnit.MILLISECONDS);
     }
 
 
@@ -541,12 +542,12 @@ public class ShardStorageEngine implements StorageEngine {
                 }, flushExecutor));
             }
             // 使用 CompletableFuture.allOf 并设置超时
-            try {
-                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                        .get(5, TimeUnit.SECONDS); // 设置超时避免永久阻塞
-            } catch (java.util.concurrent.TimeoutException | InterruptedException | ExecutionException e) {
-                log.warn("Flush task timeout or interrupted", e);
-            }
+//            try {
+//                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+//                        .get(5, TimeUnit.SECONDS); // 设置超时避免永久阻塞
+//            } catch (java.util.concurrent.TimeoutException | InterruptedException | ExecutionException e) {
+//                log.warn("Flush task timeout or interrupted", e);
+//            }
         }
     }
 
@@ -575,6 +576,7 @@ public class ShardStorageEngine implements StorageEngine {
             currentUsage -= (key.array().length + entry.getValue().length);
 
             ConcurrentSkipListMap<byte[], byte[]> shard = memTableShards[shardIndex].activeMap.get();
+            this.dataStorage.put(key.array(), entry.getValue());
             shard.remove(key.array());
             iterator.remove();
         }
@@ -668,8 +670,16 @@ public class ShardStorageEngine implements StorageEngine {
             // 6. 释放内存资源（新增）
             if (memTableShards != null) {
                 Arrays.stream(memTableShards).forEach(shard -> {
+                    if (Objects.isNull(shard))return;
                     if (shard.activeMap != null) shard.activeMap.get().clear();
-                    if (shard.immutableMap != null) shard.immutableMap.get().clear();
+                    if (shard.immutableMap != null) {
+                        ConcurrentSkipListMap<byte[], byte[]> immutableMap = shard.immutableMap.get();
+                        if (immutableMap != null) {
+                            immutableMap.clear();
+                        } else {
+                            log.warn("Encountered null immutableMap during shutdown for shard index: {}", Arrays.asList(memTableShards).indexOf(shard));
+                        }
+                    };
                 });
             }
 
