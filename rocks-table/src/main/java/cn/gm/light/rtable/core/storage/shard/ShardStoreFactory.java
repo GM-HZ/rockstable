@@ -17,7 +17,8 @@ public class ShardStoreFactory {
     }
     public ShardStore getStore(int shardId) {
         return stores.computeIfAbsent(shardId, id -> {
-            ColumnFamilyHandle cfHandle = columnFamilyHandles.get(id);
+            // 第一列是默认列族，所以需要+1
+            ColumnFamilyHandle cfHandle = columnFamilyHandles.get(id+1);
             return new ShardStoreImpl(logDB,cfHandle);
         });
     }

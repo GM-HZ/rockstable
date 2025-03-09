@@ -30,7 +30,7 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
     private final String dataDir;
     private final ReentrantLock lock = new ReentrantLock();
     private final AtomicLong lastIndex = new AtomicLong(0);
-    private RocksDB logDB;
+    private RocksDB db;
 
     public DefaultDataStorage(Config config, TRP trp) {
         this.trp = trp;
@@ -58,7 +58,7 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
     }
 
     private void initLastIndex() throws RocksDBException {
-        try (RocksIterator it = logDB.newIterator()) {
+        try (RocksIterator it = db.newIterator()) {
             it.seekToLast();
             if (it.isValid()) {
                 long index = LongToByteArray.bytesToLong(it.key());
@@ -73,7 +73,7 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
     private void initRocksDB() throws RocksDBException {
         RocksDB.loadLibrary();
         Options options = new Options().setCreateIfMissing(true);
-        logDB = RocksDB.open(options, dataDir);
+        db = RocksDB.open(options, dataDir);
         initLastIndex();
     }
 
@@ -84,7 +84,7 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
         try {
             byte[] key = kv.getKeyBytes();
             byte[] value = kv.getValueBytes();
-            logDB.put(key, value);
+            db.put(key, value);
             return true;
         } catch (RocksDBException e) {
             return false;
@@ -97,7 +97,7 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
     public byte[] get(Kv kv) {
         this.lock.lock();
         try {
-            return logDB.get(kv.getKeyBytes());
+            return db.get(kv.getKeyBytes());
         }catch (RocksDBException e) {
             throw new RuntimeException(e);
         }finally {
@@ -114,7 +114,7 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
     public byte[] get(byte[] k) {
         this.lock.lock();
         try {
-            return logDB.get(k);
+            return db.get(k);
         }catch (RocksDBException e) {
             throw new RuntimeException(e);
         }finally {
@@ -126,7 +126,7 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
     public boolean put(byte[] k, byte[] v) {
         this.lock.lock();
         try {
-            logDB.put(k, v);
+            db.put(k, v);
             return true;
         }catch (RocksDBException e) {
             log.error("Failed to put key-value pair", e);
@@ -150,7 +150,7 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
                 batch.put(entry.getKey(), entry.getValue());
             }
             // 原子提交
-            logDB.write(new org.rocksdb.WriteOptions(), batch);
+            db.write(new org.rocksdb.WriteOptions(), batch);
             return true;
         } catch (RocksDBException e) {
             log.error("Failed to put key-value pair", e);
@@ -167,7 +167,7 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
         try {
             List<Pair<byte[], byte[]>> results = new ArrayList<>(keys.size());
             for (byte[] key : keys) {
-                byte[] value = logDB.get(key);
+                byte[] value = db.get(key);
                 results.add(new Pair<>(key, value));
             }
             return results;
@@ -195,6 +195,6 @@ public class DefaultDataStorage implements DataStorage, LifeCycle {
 
     @Override
     public void stop() {
-
+        db.close();
     }
 }

@@ -1,8 +1,10 @@
 package cn.gm.light.rtable.entity;
 
-import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson2.JSON;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
 
@@ -15,6 +17,8 @@ import java.io.Serializable;
  */
 @Builder
 @Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class Kv implements Serializable {
     private String family;
     private String key;
@@ -22,7 +26,7 @@ public class Kv implements Serializable {
     private Object value;
 
     public byte[] getKeyBytes() {
-        return (family +"#"+ key +"#"+ column).getBytes();
+        return JSON.toJSONBytes(family +"#"+ key +"#"+ column);
     }
     public byte[] getValueBytes() {
         return JSON.toJSONBytes(value);

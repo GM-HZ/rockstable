@@ -12,7 +12,7 @@ import lombok.Data;
  */
 @Data
 public class Config {
-    private String tableName;
+//    private String tableName;
 
     private String dataDir;
 

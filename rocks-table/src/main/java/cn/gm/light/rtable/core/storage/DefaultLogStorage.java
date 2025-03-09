@@ -5,7 +5,7 @@ import cn.gm.light.rtable.core.config.Config;
 import cn.gm.light.rtable.entity.LogEntry;
 import cn.gm.light.rtable.entity.TRP;
 import cn.gm.light.rtable.utils.LongToByteArray;
-import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson2.JSON;
 import lombok.extern.slf4j.Slf4j;
 import org.rocksdb.*;
 
@@ -276,7 +276,11 @@ public class DefaultLogStorage implements LogStorage{
         lock.lock();
         try {
             if (index <= 0) {
-                return LogEntry.builder().index(0L).term(0L).command(null).build();
+                LogEntry logEntry = new LogEntry();
+                logEntry.setIndex(0L);
+                logEntry.setTerm(0L);
+                logEntry.setCommand(null);
+                return logEntry;
             }
             byte[] bytes = logDB.get(LongToByteArray.longToBytes(index));
             return bytes != null ? JSON.parseObject(bytes, LogEntry.class) : null;
@@ -293,7 +297,11 @@ public class DefaultLogStorage implements LogStorage{
         try {
             long index = lastIndex.get();
             if (index <= 0) {
-                return LogEntry.builder().index(0L).term(0L).command(null).build();
+                LogEntry logEntry = new LogEntry();
+                logEntry.setIndex(0L);
+                logEntry.setTerm(0L);
+                logEntry.setCommand(null);
+                return logEntry;
             }
             byte[] bytes = logDB.get(LongToByteArray.longToBytes(index));
             return bytes != null ? JSON.parseObject(bytes, LogEntry.class) : null;

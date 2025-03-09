@@ -7,7 +7,7 @@ import cn.gm.light.rtable.entity.*;
 import cn.gm.light.rtable.enums.CommandType;
 import cn.gm.light.rtable.exception.RpcException;
 import cn.gm.light.rtable.utils.TimerTask;
-import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson2.JSON;
 import com.alipay.remoting.exception.RemotingException;
 import com.alipay.remoting.rpc.RpcResponseFuture;
 import lombok.extern.slf4j.Slf4j;

@@ -1,6 +1,6 @@
 package cn.gm.light.rtable.entity;
 
-import com.alibaba.fastjson.annotation.JSONField;
+import com.alibaba.fastjson2.annotation.JSONField;
 
 import java.util.List;
 

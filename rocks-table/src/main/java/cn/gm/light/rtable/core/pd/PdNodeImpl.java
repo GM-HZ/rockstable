@@ -9,7 +9,7 @@ import cn.gm.light.rtable.entity.*;
 import cn.gm.light.rtable.enums.CommandType;
 import cn.gm.light.rtable.enums.CommonType;
 import cn.gm.light.rtable.utils.ChecksumUtil;
-import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson2.JSON;
 import com.alipay.remoting.BizContext;
 import io.etcd.jetcd.Client;
 import io.etcd.jetcd.Lease;

@@ -8,7 +8,7 @@ import cn.gm.light.rtable.core.storage.shard.ShardStoreFactory;
 import cn.gm.light.rtable.entity.LogEntry;
 import cn.gm.light.rtable.entity.TRP;
 import cn.gm.light.rtable.utils.LongToByteArray;
-import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson2.JSON;
 import lombok.extern.slf4j.Slf4j;
 import org.rocksdb.*;
 
@@ -63,8 +63,33 @@ public class DefaultShardLogStorage {
     private void initRocksDB() throws RocksDBException {
         RocksDB.loadLibrary();
         if (columnFamilyDescriptors != null && columnFamilyHandles != null) {
-            DBOptions options = new DBOptions().setCreateIfMissing(true);
-            logDB = RocksDB.open(options, dataDir,columnFamilyDescriptors, columnFamilyHandles);
+            // 将默认列族作为第一个列族
+            List<ColumnFamilyDescriptor> allDescriptors = new ArrayList<>();
+            List<ColumnFamilyHandle> allHandles = new ArrayList<>();
+
+            // 添加默认列族
+            allDescriptors.add(new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY));
+
+            // 添加分片列族
+            allDescriptors.addAll(columnFamilyDescriptors);
+
+            // 获取现有列族列表
+            List<byte[]> existingCFs = RocksDB.listColumnFamilies(new Options(), dataDir);
+
+            // 确保所有列族都存在
+            for (ColumnFamilyDescriptor descriptor : columnFamilyDescriptors) {
+                String cfName = new String(descriptor.getName());
+                if (!existingCFs.contains(descriptor.getName())) {
+                    log.info("Creating new column family: {}", cfName);
+                }
+            }
+
+            DBOptions options = new DBOptions().setCreateIfMissing(true).setCreateMissingColumnFamilies(true);
+            logDB = RocksDB.open(options, dataDir, allDescriptors, allHandles);
+
+            // 调整列族句柄映射关系，将默认列族映射到索引 0，然后去除掉默认列族
+            columnFamilyHandles.clear();
+            columnFamilyHandles.addAll(allHandles.subList(1, allHandles.size()));
         }else {
             Options options = new Options().setCreateIfMissing(true);
             logDB = RocksDB.open(options, dataDir);

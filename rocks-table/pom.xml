@@ -12,6 +12,10 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- pom.xml 依赖版本调整 -->
+        <fastjson.version>1.2.83</fastjson.version>
+        <fastjson2.version>2.0.48</fastjson2.version>
+        <lombok.version>1.18.30</lombok.version>
     </properties>
     <dependencies>
 
@@ -31,8 +35,11 @@
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
-            <version>3.1.8</version> <!-- 使用最新版本，建议检查 Maven 中央仓库 -->
+<!--            <version>3.1.8</version> &lt;!&ndash; 使用最新版本，建议检查 Maven 中央仓库 &ndash;&gt;-->
+            <!-- 选择一个兼容 Java 8 的版本 -->
+            <version>2.9.3</version>
         </dependency>
+
 
         <dependency>
             <groupId>com.hazelcast</groupId>
@@ -40,14 +47,24 @@
             <version>5.3.1</version>
         </dependency>
 
+        <dependency>
+            <groupId>org.openjdk.jmh</groupId>
+            <artifactId>jmh-core</artifactId>
+            <version>1.35</version>
+        </dependency>
 
 
-        <!-- ... 现有的 fastjson 依赖 ... -->
 
         <dependency>
-            <groupId>com.alibaba</groupId>
-            <artifactId>fastjson</artifactId>
-            <version>1.2.62</version>
+            <groupId>com.alibaba.fastjson2</groupId>
+            <artifactId>fastjson2</artifactId>
+            <version>${fastjson2.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>${lombok.version}</version>
+            <scope>provided</scope>
         </dependency>
 
         <dependency>
@@ -66,11 +83,6 @@
             <artifactId>bolt</artifactId>
             <version>1.6.4</version>
             <scope>compile</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <version>1.16.22</version>
         </dependency>
 
         <dependency>

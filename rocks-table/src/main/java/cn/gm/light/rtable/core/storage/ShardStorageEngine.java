@@ -11,6 +11,7 @@ import cn.gm.light.rtable.utils.BloomFilter;
 import cn.gm.light.rtable.utils.ConcurrentBloomFilter;
 import cn.gm.light.rtable.utils.Pair;
 import cn.gm.light.rtable.utils.RtThreadFactory;
+import com.alibaba.fastjson2.JSON;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.stats.CacheStats;
@@ -70,6 +71,7 @@ public class ShardStorageEngine implements StorageEngine {
     private final ColumnFamilyDescriptor[] shardCfDescriptors;
     // 内存分片
     private static class MemTableShard {
+        // todo 对比 ConcurrentRadixTree优化
         final AtomicReference<ConcurrentSkipListMap<byte[], byte[]>> activeMap;
         final AtomicReference<ConcurrentSkipListMap<byte[], byte[]>> immutableMap;
         final ColumnFamilyHandle cfHandle; // 新增列族句柄
@@ -119,7 +121,7 @@ public class ShardStorageEngine implements StorageEngine {
         this.cacheSize =  1024 * 1024;
         this.bloomFilters = new BloomFilter[shardCount];
         for(int i=0; i<shardCount; i++){
-            bloomFilters[i] = new ConcurrentBloomFilter(1024 * 1024 * 1024, 0.01);
+            bloomFilters[i] = new ConcurrentBloomFilter(1_000_000, 0.01);
         }
 
         // 初始化时按分片创建缓存
@@ -139,7 +141,6 @@ public class ShardStorageEngine implements StorageEngine {
                         .maximumWeight(maxMemory / shardCount / 2)
                         // 过期策略
                         .expireAfterAccess(30, TimeUnit.SECONDS)  // 30秒无访问淘汰
-                        .refreshAfterWrite(1, TimeUnit.SECONDS)   // 1秒后异步刷新
                         // GC优化
                         .weakKeys()             // 允许GC回收无引用的Key
                         .softValues()           // 使用软引用存储Value
@@ -306,7 +307,14 @@ public class ShardStorageEngine implements StorageEngine {
         LogEntry[] array = batch.stream().map(kv -> {
             LogEntry logEntry = new LogEntry();
             logEntry.setTerm(term);
+          try {
+              log.info("日志条目：{}", JSON.toJSONString(logEntry));
+          }catch (Exception e){
+              log.error("日志条目：{}", e.getMessage(),e);
+          }
+            log.info("日志条目：{}", JSON.toJSONString(kv));
             logEntry.setCommand(kv);
+            log.info("日志条目：{}", JSON.toJSONString(logEntry));
             return logEntry;
         }).toArray(LogEntry[]::new);
         return array;
@@ -544,6 +552,8 @@ public class ShardStorageEngine implements StorageEngine {
     // 在关闭存储引擎时
     public void shutdown() {
         disruptor.shutdown();
+        dataStorage.stop();
+        shardLogStorage.stop();
         // 关闭其他资源...
     }
 
