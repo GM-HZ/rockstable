@@ -677,7 +677,7 @@ public class ShardStorageEngine implements StorageEngine {
                         if (immutableMap != null) {
                             immutableMap.clear();
                         } else {
-                            log.warn("Encountered null immutableMap during shutdown for shard index: {}", Arrays.asList(memTableShards).indexOf(shard));
+                            log.debug("Encountered null immutableMap during shutdown for shard index: {}", Arrays.asList(memTableShards).indexOf(shard));
                         }
                     };
                 });

@@ -38,6 +38,21 @@ public class DefaultShardLogStorage {
         }
         Map<Integer, ColumnFamilyHandle> collect = columnFamilyHandles.stream().collect(Collectors.toMap(ColumnFamilyHandle::getID, columnFamilyHandle -> columnFamilyHandle));
         shardStoreFactory = new ShardStoreFactory(logDB,collect);
+
+        // 日志输出验证
+        List<String> list = new ArrayList<>();
+        for (ColumnFamilyHandle columnFamilyHandle : columnFamilyHandles) {
+            byte[] name = new byte[0];
+            try {
+                name = columnFamilyHandle.getName();
+            } catch (RocksDBException e) {
+                throw new RuntimeException(e);
+            }
+            list.add(new String(name));
+        }
+        log.debug("Initialized {} column families: {}", columnFamilyHandles.size(),
+                list);
+
         Runtime.getRuntime().addShutdownHook(new Thread(this::stop));
     }
     private String initializeLogDir(Config config) {
