@@ -17,8 +17,11 @@ import java.io.Serializable;
  */
 @Data
 public class Kv implements Serializable {
+    // 不同业务线
     private String family;
+    // 不同业务线下的key
     private String key;
+    // 不同key下的column
     private String column;
     private Object value;
 

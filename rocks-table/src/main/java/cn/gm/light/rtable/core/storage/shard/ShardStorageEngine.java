@@ -15,6 +15,7 @@ import cn.gm.light.rtable.utils.RtThreadFactory;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.stats.CacheStats;
+import com.google.common.base.Charsets;
 import com.lmax.disruptor.SleepingWaitStrategy;
 import com.lmax.disruptor.TimeoutException;
 import com.lmax.disruptor.dsl.Disruptor;
@@ -199,6 +200,7 @@ public class ShardStorageEngine implements StorageEngine {
                 new SleepingWaitStrategy(100, 1000));
         disruptor.handleEventsWith((event, sequence, endOfBatch) -> {
             try {
+                log.debug("收到分片{} 批量写入请求,{}", event.shardIndex, event.batch.size());
                 processShardBatch(event.shardIndex, event.batch);
             } catch (Exception e) {
                 log.error("分片处理失败", e);
@@ -223,13 +225,14 @@ public class ShardStorageEngine implements StorageEngine {
             // 分片收集数据
             Map<Integer, List<Kv>> shardedBatch = new HashMap<>();
             for (Kv kv : kvs) {
-                int shardIndex = getShardIndex(kv.getKeyBytes());
+                int shardIndex = getShardIndex(kv);
                 shardedBatch.computeIfAbsent(shardIndex, k -> new ArrayList<>()).add(kv);
             }
             // 批量写入各分片
             // 无需外部锁
             shardedBatch.forEach((shardIndex, batch) -> {
                 // 使用 Disruptor 发布事件
+                log.debug("shardedBatch收到分片{} 批量写入请求,{}", shardIndex, batch.size());
                 disruptor.getRingBuffer().publishEvent((event, sequence) -> {
                     event.set(shardIndex, batch);
                 });
@@ -261,12 +264,12 @@ public class ShardStorageEngine implements StorageEngine {
 
     // 在 disruptor.handleEventsWith() 中的处理器
     private void processShardBatch(int shardIndex, List<Kv> batch) {
-        log.debug("分片{} 收到批量写入请求,{}", shardIndex, batch.size());
         LogEntry[] array = getLogEntries(batch);
         // 0. 写入wal,内部封装了RocksDB，已经加锁了，暂时是同步的，可以增加异步逻辑
         if (config.isEnableAsyncWal()){
             shardLogStorage.getShardLogStorage(shardIndex).asyncAppend(array);
         }else{
+            log.debug("分片{} 收到批量写入请求,{}", shardIndex, batch.size());
             shardLogStorage.getShardLogStorage(shardIndex).append(array);
         }
 
@@ -332,7 +335,7 @@ public class ShardStorageEngine implements StorageEngine {
 
     @Override
     public Boolean delete(Kv kv) {
-        int shardIndex = getShardIndex(kv.getKeyBytes());
+        int shardIndex = getShardIndex(kv);
         ConcurrentSkipListMap<byte[], byte[]> shard = memTableShards[shardIndex].activeMap.get();
         byte[] removed = shard.remove(kv.getKeyBytes());
         if (removed != null) {
@@ -348,7 +351,7 @@ public class ShardStorageEngine implements StorageEngine {
     @Override
     public Boolean get(Kv kv) {
         readRequests.increment();
-        int shardIndex = getShardIndex(kv.getKeyBytes());
+        int shardIndex = getShardIndex(kv);
         // 布隆过滤器过滤
         if (!bloomFilters[shardIndex].mightContain(kv.getKeyBytes())) {
             return false;
@@ -492,7 +495,9 @@ public class ShardStorageEngine implements StorageEngine {
         }
     }
 
-    private int getShardIndex(byte[] key) {
+    // 根据key获取分片索引，这里的key包括不同表+key
+    private int getShardIndex(Kv kv) {
+        byte[] key = (kv.getFamily() + "#" +kv.getKey()).getBytes(Charsets.UTF_8);
         return Math.abs(Arrays.hashCode(key)) % shardCount;
     }
 
