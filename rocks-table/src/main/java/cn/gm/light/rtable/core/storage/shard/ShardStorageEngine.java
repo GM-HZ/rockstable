@@ -627,36 +627,58 @@ public class ShardStorageEngine implements StorageEngine {
     public void shutdown() throws TimeoutException {
         log.info("Shutting down storage engine...");
 
-        // 1. 先停止接收新任务
-        isRunning.set(false);
-
-        // 2. 关闭 Disruptor（添加超时）
-        if (disruptor != null) {
-            disruptor.shutdown(10, TimeUnit.SECONDS);
-        }
-
-        // 3. 改进线程池关闭逻辑（添加关闭顺序）
-        shutdownExecutor("Async", asyncExecutor);
-        shutdownExecutor("Flush", flushExecutor);
-        shutdownExecutor("Business", businessExecutor);
-
-        // 4. 关闭数据存储（添加超时）
         try {
-            dataStorage.stop();
-            log.info("DataStorage stopped");
+            // 1. 停止接收新任务
+            isRunning.set(false);
+
+            // 2. 关闭线程池（改进关闭顺序）
+            shutdownExecutor("Async", asyncExecutor);
+            shutdownExecutor("Flush", flushExecutor);
+            shutdownExecutor("Business", businessExecutor);
+
+            // 3. 关闭Disruptor（添加状态检查）
+            if (disruptor != null) {
+                try {
+                    disruptor.shutdown(10, TimeUnit.SECONDS);
+                    log.info("Disruptor shutdown completed");
+                } catch (TimeoutException e) {
+                    log.warn("Disruptor shutdown timeout", e);
+                }
+            }
+
+            // 4. 关闭数据存储（添加完整性检查）
+            if (dataStorage != null) {
+                dataStorage.stop();
+                log.info("DataStorage stopped");
+            }
+
+            // 5. 关闭日志存储（添加空检查）
+            if (shardLogStorage != null) {
+                shardLogStorage.stop();
+                log.info("ShardLogStorage closed");
+            }
+
+            // 6. 释放内存资源（新增）
+            if (memTableShards != null) {
+                Arrays.stream(memTableShards).forEach(shard -> {
+                    if (shard.activeMap != null) shard.activeMap.get().clear();
+                    if (shard.immutableMap != null) shard.immutableMap.get().clear();
+                });
+            }
+
+            // 7. 清理缓存（新增）
+            if (shardedLruCaches != null) {
+                Arrays.stream(shardedLruCaches).forEach(Cache::invalidateAll);
+            }
+
+            // 8. 关闭列族资源（新增）
+            if (shardCfHandles != null) {
+                Arrays.stream(shardCfHandles).forEach(ColumnFamilyHandle::close);
+            }
         } catch (Exception e) {
-            log.error("DataStorage stop failed", e);
-        }
-
-        // 5. 关闭日志存储（添加强制关闭）
-        if (shardLogStorage != null) {
-            shardLogStorage.stop(); // 确保实现 close() 方法
-            log.info("ShardLogStorage closed");
-        }
-
-        // 6. 关闭其他资源（新增）
-        if (bloomFilters != null) {
-//            Arrays.stream(bloomFilters).forEach(BloomFilter::clear);
+            log.error("Shutdown error", e);
+        } finally {
+            log.info("Storage engine shutdown completed");
         }
     }
 
