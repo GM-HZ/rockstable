@@ -1,22 +1,14 @@
 package cn.gm.light.rtable.core.storage.shard;
 
-import cn.gm.light.rtable.core.LogStorage;
-import cn.gm.light.rtable.core.ShardLogStorage;
 import cn.gm.light.rtable.core.config.Config;
-import cn.gm.light.rtable.core.storage.shard.ShardStore;
-import cn.gm.light.rtable.core.storage.shard.ShardStoreFactory;
-import cn.gm.light.rtable.entity.LogEntry;
 import cn.gm.light.rtable.entity.TRP;
-import cn.gm.light.rtable.utils.LongToByteArray;
-import com.alibaba.fastjson2.JSON;
 import lombok.extern.slf4j.Slf4j;
 import org.rocksdb.*;
 
 import java.io.File;
-import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -111,9 +103,27 @@ public class DefaultShardLogStorage {
     public void stop() {
         if (logDB != null) {
             try {
-                logDB.close();
+                // 1. 先同步所有写入
+                logDB.syncWal(); // 强制同步WAL日志
+                logDB.flush(new FlushOptions().setWaitForFlush(true)); // 强制刷新所有MemTable
+
+                // 2. 关闭列族句柄（关键补充）
+                for (ColumnFamilyHandle handle : columnFamilyHandles) {
+                    if (handle != null && handle.isOwningHandle()) {
+                        handle.close();
+                    }
+                }
+
+                // 3. 关闭数据库实例（原有代码增强）
+                try {
+                    // 显式关闭（替代 try-with-resources）
+                    logDB.close();
+                } finally {
+                    logDB = null; // 确保引用置空
+                    log.info("RocksDB closed successfully.");
+                }
+
                 log.info("RocksDB closed successfully.");
-                logDB = null; // 防止重复关闭
             } catch (Exception e) {
                 log.error("Failed to close RocksDB", e);
             }

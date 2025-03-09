@@ -4,6 +4,8 @@ import cn.gm.light.rtable.core.config.Config;
 import cn.gm.light.rtable.core.storage.shard.ShardStorageEngine;
 import cn.gm.light.rtable.entity.Kv;
 import cn.gm.light.rtable.entity.TRP;
+import com.lmax.disruptor.TimeoutException;
+import lombok.extern.slf4j.Slf4j;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 import java.util.concurrent.ThreadLocalRandom;
@@ -16,10 +18,11 @@ import java.util.concurrent.TimeUnit;
 @Threads(64)                            // 64线程模拟高并发
 @Fork(1)                                // 单进程测试
 @State(Scope.Benchmark)
+@Slf4j
 public class ShardStorageEngineBenchmark {
 
     // 分片数配置（参数化测试）
-    @Param({"32", "64", "128"})
+    @Param({"16", "32", "64"})
     private int shardCount;
 
     // 存储引擎实例（线程共享）
@@ -42,7 +45,7 @@ public class ShardStorageEngineBenchmark {
         storageEngine = new ShardStorageEngine(config, "chunk_test_table_0_0", trp);
 
         // 生成测试键（10万条数据，覆盖不同分片）
-        int dataSize = 100_000;
+        int dataSize = 1_000_000;
         testKeys = new String[dataSize][];
         for (int i = 0; i < dataSize; i++) {
             String colFamily = "cf" + (i % 10);          // 10个列族
@@ -54,7 +57,11 @@ public class ShardStorageEngineBenchmark {
 
     @TearDown(Level.Trial)
     public void tearDown() {
-        storageEngine.shutdown(); // 关闭存储引擎
+        try {
+            storageEngine.shutdown(); // 关闭存储引擎
+        } catch (TimeoutException e) {
+            log.error("StorageEngine shutdown failed", e);
+        }
     }
 
     // 随机获取一个测试键（模拟真实分布）

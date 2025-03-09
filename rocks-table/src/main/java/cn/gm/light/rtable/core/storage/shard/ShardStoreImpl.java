@@ -71,6 +71,9 @@ public class ShardStoreImpl implements ShardStore {
 
             // 最终一致性更新（修复点）
             lastIndex.set(expectedIndex - 1);
+            if ((expectedIndex - 1) % 1000 == 0){
+                log.info("Mark flush index:{}", expectedIndex - 1);
+            }
 
             WriteOptions writeOptions = new WriteOptions();
             writeOptions.setSync(true);
