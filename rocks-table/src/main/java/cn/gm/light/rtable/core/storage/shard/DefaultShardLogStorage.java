@@ -87,6 +87,12 @@ public class DefaultShardLogStorage {
             DBOptions options = new DBOptions()
                     .setCreateIfMissing(true)
                     .setCreateMissingColumnFamilies(true);
+            // 增加文件打开线程数
+            options.setMaxFileOpeningThreads(128);
+            // 增加最大后台作业线程数
+            options.setMaxBackgroundJobs(16);
+            // 调整WAL文件大小
+            options.setMaxTotalWalSize(512 * 1024 * 1024L);
             logDB = RocksDB.open(options, dataDir, allDescriptors, allHandles);
 
             // 调整列族句柄映射关系，将默认列族映射到索引 0，然后去除掉默认列族

@@ -5,8 +5,6 @@ import cn.gm.light.rtable.core.StorageEngine;
 import cn.gm.light.rtable.core.config.Config;
 import cn.gm.light.rtable.core.storage.DefaultDataStorage;
 import cn.gm.light.rtable.core.storage.ReplicationEventListener;
-import cn.gm.light.rtable.core.storage.shard.DefaultShardLogStorage;
-import cn.gm.light.rtable.core.storage.shard.ShardStore;
 import cn.gm.light.rtable.entity.Kv;
 import cn.gm.light.rtable.entity.LogEntry;
 import cn.gm.light.rtable.entity.TRP;
@@ -18,6 +16,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.stats.CacheStats;
 import com.lmax.disruptor.SleepingWaitStrategy;
+import com.lmax.disruptor.TimeoutException;
 import com.lmax.disruptor.dsl.Disruptor;
 import com.lmax.disruptor.dsl.ProducerType;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +30,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.StampedLock;
@@ -52,6 +52,7 @@ import java.util.stream.Collectors;
 
 @Slf4j
 public class ShardStorageEngine implements StorageEngine {
+    private AtomicBoolean isRunning = new AtomicBoolean(false);
     private final List<ReplicationEventListener> replicationListeners = new CopyOnWriteArrayList<>();
     private final DefaultDataStorage dataStorage;
     private final DefaultShardLogStorage shardLogStorage;
@@ -165,6 +166,8 @@ public class ShardStorageEngine implements StorageEngine {
         for (int i = 0; i < shardCount; i++) {
             ColumnFamilyOptions columnFamilyOptions = new ColumnFamilyOptions()
                     .setCompressionType(CompressionType.LZ4_COMPRESSION)
+                    .setWriteBufferSize(64 * 1024 * 1024)  // 64MB
+                    .setMaxWriteBufferNumber(4)
                     .optimizeLevelStyleCompaction();
             shardCfDescriptors[i] = new ColumnFamilyDescriptor(("shard_"+i).getBytes(StandardCharsets.UTF_8), columnFamilyOptions);
             cfDescriptors.add(shardCfDescriptors[i]);
@@ -203,6 +206,7 @@ public class ShardStorageEngine implements StorageEngine {
         });
         disruptor.start();
         startFlushTask();
+        isRunning.set(true);
     }
 
     @Override
@@ -432,6 +436,10 @@ public class ShardStorageEngine implements StorageEngine {
     class FlushMemTables implements Runnable {
         @Override
         public void run() {
+            if (!isRunning.get()) { // 新增运行状态检查
+                log.warn("Flush task skipped due to shutdown");
+                return;
+            }
             List<CompletableFuture<Void>> futures = new ArrayList<>();
             for (int shardIndex = 0; shardIndex < memTableShards.length; shardIndex++) {
                 MemTableShard shard = memTableShards[shardIndex];
@@ -557,11 +565,41 @@ public class ShardStorageEngine implements StorageEngine {
         }
     }
     // 在关闭存储引擎时
-    public void shutdown() {
-        disruptor.shutdown();
-        dataStorage.stop();
-        shardLogStorage.stop();
-        // 关闭其他资源...
+    // 修改 shutdown 方法
+    public void shutdown() throws TimeoutException {
+        log.info("Shutting down storage engine...");
+
+        // 1. 先停止接收新任务
+        isRunning.set(false);
+
+        // 2. 关闭 Disruptor（添加超时）
+        if (disruptor != null) {
+            disruptor.shutdown(10, TimeUnit.SECONDS);
+        }
+
+        // 3. 改进线程池关闭逻辑（添加关闭顺序）
+        shutdownExecutor("Async", asyncExecutor);
+        shutdownExecutor("Flush", flushExecutor);
+        shutdownExecutor("Business", businessExecutor);
+
+        // 4. 关闭数据存储（添加超时）
+        try {
+            dataStorage.stop();
+            log.info("DataStorage stopped");
+        } catch (Exception e) {
+            log.error("DataStorage stop failed", e);
+        }
+
+        // 5. 关闭日志存储（添加强制关闭）
+        if (shardLogStorage != null) {
+            shardLogStorage.stop(); // 确保实现 close() 方法
+            log.info("ShardLogStorage closed");
+        }
+
+        // 6. 关闭其他资源（新增）
+        if (bloomFilters != null) {
+//            Arrays.stream(bloomFilters).forEach(BloomFilter::clear);
+        }
     }
 
     // 新增热点检测方法
@@ -569,6 +607,21 @@ public class ShardStorageEngine implements StorageEngine {
         return Arrays.stream(memTableShards)
                 .max(Comparator.comparing(shard -> shard.shardReadCount.sum()))
                 .orElseGet(null);
+    }
+    // 新增线程池关闭辅助方法
+    private void shutdownExecutor(String name, ExecutorService executor) {
+        if (executor != null) {
+            try {
+                log.info("Shutting down {} executor...", name);
+                List<Runnable> skipped = executor.shutdownNow();
+                if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    log.warn("{} executor did not terminate in time", name);
+                }
+                log.info("{} executor shutdown complete. Skipped tasks: {}", name, skipped.size());
+            } catch (Exception e) {
+                log.error("{} executor shutdown failed", name, e);
+            }
+        }
     }
 
 }
