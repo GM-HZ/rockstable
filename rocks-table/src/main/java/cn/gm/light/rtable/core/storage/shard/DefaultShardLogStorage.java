@@ -69,7 +69,7 @@ public class DefaultShardLogStorage {
             List<byte[]> existingCFs = RocksDB.listColumnFamilies(new Options(), dataDir);
 
             // 确保所有列族都存在
-            for (ColumnFamilyDescriptor descriptor : columnFamilyDescriptors) {
+            for (ColumnFamilyDescriptor descriptor : allDescriptors) {
                 String cfName = new String(descriptor.getName());
                 if (!existingCFs.contains(descriptor.getName())) {
                     log.info("Creating new column family: {}", cfName);
@@ -119,7 +119,9 @@ public class DefaultShardLogStorage {
                     // 显式关闭（替代 try-with-resources）
                     logDB.close();
                 } finally {
-                    logDB = null; // 确保引用置空
+                    logDB = null;
+                    columnFamilyHandles.forEach(ColumnFamilyHandle::close);
+                    columnFamilyHandles.clear();
                     log.info("RocksDB closed successfully.");
                 }
 
