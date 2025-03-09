@@ -214,6 +214,11 @@ public class DefaultStorageEngine implements StorageEngine {
     }
 
     @Override
+    public CompletableFuture<Void> asyncBatchPut(Kv[] kvs) {
+        return null;
+    }
+
+    @Override
     public Boolean delete(Kv kv) {
         int shardIndex = getShardIndex(kv.getKeyBytes());
         ConcurrentSkipListMap<byte[], byte[]> shard = memTableShards[shardIndex].activeMap.get();
