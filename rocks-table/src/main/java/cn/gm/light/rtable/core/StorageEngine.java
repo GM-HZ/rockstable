@@ -4,6 +4,8 @@ import cn.gm.light.rtable.core.storage.ReplicationEventListener;
 import cn.gm.light.rtable.entity.Kv;
 import cn.gm.light.rtable.entity.LogEntry;
 
+import java.util.concurrent.CompletableFuture;
+
 /**
  * @author 明溪
  * @version 1.0
@@ -15,6 +17,8 @@ public interface StorageEngine {
     Long appendLog(LogEntry logEntry);
 
     Boolean batchPut(Kv[] kvs);
+
+    CompletableFuture<Void> asyncBatchPut(Kv[] kvs);
 
     Boolean delete(Kv kv);
 

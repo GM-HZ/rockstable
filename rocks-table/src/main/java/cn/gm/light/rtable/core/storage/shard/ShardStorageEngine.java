@@ -31,9 +31,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.atomic.LongAdder;
+import java.util.concurrent.atomic.*;
 import java.util.concurrent.locks.StampedLock;
 import java.util.stream.Collectors;
 
@@ -61,7 +59,8 @@ public class ShardStorageEngine implements StorageEngine {
     private final Config config;
     // 布隆过滤器
     private final BloomFilter[] bloomFilters;
-
+    // 新增请求ID生成器
+    private final AtomicLong requestIdGenerator = new AtomicLong(0);
     // 优化点：分片LRU缓存
     private final Cache<ByteBuffer, byte[]>[] shardedLruCaches;
 
@@ -201,9 +200,10 @@ public class ShardStorageEngine implements StorageEngine {
         disruptor.handleEventsWith((event, sequence, endOfBatch) -> {
             try {
                 log.debug("收到分片{} 批量写入请求,{}", event.shardIndex, event.batch.size());
-                processShardBatch(event.shardIndex, event.batch);
+                processShardBatch(event.shardIndex, event.batch, event.tracker);
             } catch (Exception e) {
                 log.error("分片处理失败", e);
+                event.tracker.onShardComplete(e);
             }
         });
         disruptor.start();
@@ -218,27 +218,80 @@ public class ShardStorageEngine implements StorageEngine {
 
     @Override
     public Boolean batchPut(Kv[] kvs) {
-        // 批量提交优化
-        CompletableFuture.runAsync(() -> {
-            writeRequests.increment();
-            // 避免线程切换
-            // 分片收集数据
-            Map<Integer, List<Kv>> shardedBatch = new HashMap<>();
-            for (Kv kv : kvs) {
-                int shardIndex = getShardIndex(kv);
-                shardedBatch.computeIfAbsent(shardIndex, k -> new ArrayList<>()).add(kv);
-            }
-            // 批量写入各分片
-            // 无需外部锁
-            shardedBatch.forEach((shardIndex, batch) -> {
-                // 使用 Disruptor 发布事件
-                log.debug("shardedBatch收到分片{} 批量写入请求,{}", shardIndex, batch.size());
-                disruptor.getRingBuffer().publishEvent((event, sequence) -> {
-                    event.set(shardIndex, batch);
-                });
-            });
-        }, asyncExecutor);
+        CompletableFuture<Void> voidCompletableFuture = asyncBatchPut(kvs);
+        try {
+            voidCompletableFuture.get();
+            return true;
+        } catch (Exception e) {
+            log.error("批量写入失败", e);
+            return false;
+        }
+    }
 
+    // 请求跟踪器，聚合多个分片的处理结果
+    private static class BatchRequestTracker {
+        private final int totalShards;
+        private final AtomicInteger completedShards = new AtomicInteger(0);
+        private final CompletableFuture<Void> future = new CompletableFuture<>();
+        private volatile Throwable failureCause;
+
+        BatchRequestTracker(int totalShards) {
+            this.totalShards = totalShards;
+        }
+
+        // 分片完成时调用（成功或失败）
+        public void onShardComplete(Throwable error) {
+            if (error != null) {
+                // 仅记录第一个错误
+                if (failureCause == null) {
+                    failureCause = error;
+                    future.completeExceptionally(error);
+                }
+            } else {
+                if (completedShards.incrementAndGet() == totalShards && failureCause == null) {
+                    future.complete(null); // 全部分片成功
+                }
+            }
+        }
+
+        public CompletableFuture<Void> getFuture() {
+            return future;
+        }
+    }
+    private Map<Integer, List<Kv>> splitIntoShards(Kv[] kvs) {
+        Map<Integer, List<Kv>> sharded = new HashMap<>();
+        // 避免线程切换
+        // 分片收集数据
+        for (Kv kv : kvs) {
+            int shardIndex = getShardIndex(kv);
+            sharded.computeIfAbsent(shardIndex, k -> new ArrayList<>()).add(kv);
+        }
+        return sharded;
+    }
+
+    @Override
+    public CompletableFuture<Void> asyncBatchPut(Kv[] kvs) {
+        // 批量提交优化
+        writeRequests.increment();
+        // 分片数据分组
+        Map<Integer, List<Kv>> shardedBatch = splitIntoShards(kvs);
+
+        // 创建请求跟踪器
+        BatchRequestTracker tracker = new BatchRequestTracker(shardedBatch.size());
+        // 批量写入各分片
+        // 无需外部锁
+        shardedBatch.forEach((shardIndex, batch) -> {
+            // 使用 Disruptor 发布事件
+            log.debug("shardedBatch收到分片{} 批量写入请求,{}", shardIndex, batch.size());
+            disruptor.getRingBuffer().publishEvent((event, sequence) -> {
+                event.set(shardIndex, batch,tracker);
+            });
+        });
+        evictData();
+        return tracker.getFuture();
+    }
+
+    private void evictData() {
         // 基于概率的主动内存检查，按照分片级别
         if (ThreadLocalRandom.current().nextDouble() < 0.3) { // 30%概率触发检查
             flushExecutor.execute(() -> {
@@ -259,11 +312,10 @@ public class ShardStorageEngine implements StorageEngine {
                 }
             });
         }
-        return true;
     }
 
     // 在 disruptor.handleEventsWith() 中的处理器
-    private void processShardBatch(int shardIndex, List<Kv> batch) {
+    private void processShardBatch(int shardIndex, List<Kv> batch, BatchRequestTracker tracker) {
         LogEntry[] array = getLogEntries(batch);
         // 0. 写入wal,内部封装了RocksDB，已经加锁了，暂时是同步的，可以增加异步逻辑
         if (config.isEnableAsyncWal()){
@@ -280,11 +332,6 @@ public class ShardStorageEngine implements StorageEngine {
                 .collect(Collectors.toSet());
         bloomFilters[shardIndex].addAll(keys);
 
-        // 布隆过滤器过滤
-//        if (!bloomFilters[shardIndex].mightContain(batch.get(0).getKeyBytes())) {
-//            log.debug("BloomFilter过滤");
-//        }
-
         // 2. 批量写入内存表
         // ConcurrentSkipListMap.put 是线程安全的
         Map<byte[], byte[]> kvMap = batch.stream()
@@ -297,6 +344,9 @@ public class ShardStorageEngine implements StorageEngine {
         if (shard.activeMap.get().containsKey(batch.get(0).getKeyBytes())){
             log.debug("内存表过滤");
         }
+
+        // 内存中更新完毕就可以返回，不需要等待后续操作完成
+        tracker.onShardComplete(null); // 标记分片成功
 
         // 3. 批量更新LRU缓存,lruCache 是线程安全的
         Map<ByteBuffer, byte[]> cacheEntries = batch.stream()
@@ -564,10 +614,12 @@ public class ShardStorageEngine implements StorageEngine {
     public static class ShardBatchEvent {
         private int shardIndex;
         private List<Kv> batch;
+        private BatchRequestTracker tracker;
 
-        public void set(int shardIndex, List<Kv> batch) {
+        public void set(int shardIndex, List<Kv> batch,BatchRequestTracker tracker) {
             this.shardIndex = shardIndex;
             this.batch = batch;
+            this.tracker = tracker;
         }
     }
     // 在关闭存储引擎时
