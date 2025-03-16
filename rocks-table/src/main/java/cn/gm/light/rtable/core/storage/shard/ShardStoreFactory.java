@@ -3,12 +3,13 @@ package cn.gm.light.rtable.core.storage.shard;
 import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.RocksDB;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 // 新增分片工厂
 public class ShardStoreFactory {
-    private final Map<Integer, ShardStore> stores = new ConcurrentHashMap<>();
+    private final Map<Integer, ShardStore> stores = new HashMap<>();
     public final Map<Integer, ColumnFamilyHandle> columnFamilyHandles;
     private final RocksDB logDB;
     public ShardStoreFactory(RocksDB logDB ,Map<Integer, ColumnFamilyHandle> columnFamilyHandles) {
@@ -23,6 +24,6 @@ public class ShardStoreFactory {
         });
     }
     public void close() {
-        stores.values().forEach(ShardStore::close);
+        stores.clear();
     }
 }

@@ -51,7 +51,6 @@ public class DefaultShardLogStorage {
         log.debug("Initialized {} column families: {}", columnFamilyHandles.size(),
                 list);
 
-        Runtime.getRuntime().addShutdownHook(new Thread(this::stop));
     }
     private String initializeLogDir(Config config) {
         String serialize = trp.serialize();
@@ -134,11 +133,22 @@ public class DefaultShardLogStorage {
     public void stop() {
         if (logDB != null) {
             try {
+                // 1. 停止 RocksDB 后台线程
+                logDB.disableFileDeletions(); // 阻止后台删除
                 // 1. 先同步所有写入
                 logDB.syncWal(); // 强制同步WAL日志
                 logDB.flush(new FlushOptions().setWaitForFlush(true)); // 强制刷新所有MemTable
 
-                // 2. 关闭列族句柄（关键补充）
+                // 确保关闭前没有线程访问
+                synchronized (this) {
+                    // 2. 显式关闭所有列族句柄
+                    for (ColumnFamilyHandle handle : columnFamilyHandles) {
+                        if (handle != null && handle.isOwningHandle()) {
+                            handle.close(); // 确保只关闭一次
+                        }
+                    }
+                    columnFamilyHandles.clear();
+                }
                 shardStoreFactory.close();
 
                 // 3. 关闭数据库实例（原有代码增强）

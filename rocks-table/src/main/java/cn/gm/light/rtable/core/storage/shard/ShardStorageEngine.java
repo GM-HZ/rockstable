@@ -112,10 +112,10 @@ public class ShardStorageEngine implements StorageEngine {
     private final ScheduledExecutorService flushExecutor = Executors.newSingleThreadScheduledExecutor();
     private final ScheduledExecutorService asyncExecutor = Executors.newSingleThreadScheduledExecutor();
     private final ExecutorService businessExecutor;
+    private final ExecutorService walExecutor;
 
     private final Disruptor<ShardBatchEvent> disruptor;
     private final RingBuffer<ShardBatchEvent> ringBuffer;
-    private final ExecutorService walExecutor;
     private final ArrayBlockingQueue<Future<Void>> queue = new ArrayBlockingQueue<>(1024);
     public ShardStorageEngine(Config config, String chunkId, TRP trp) {
         this.config = config;
@@ -223,7 +223,7 @@ public class ShardStorageEngine implements StorageEngine {
         startFlushTask();
         isRunning.set(true);
         // 优化点1：使用自定义线程池（避免ForkJoinPool竞争）
-        walExecutor = Executors.newFixedThreadPool(shardCount, RtThreadFactory.forThreadPool("WAL-Worker"));
+        this.walExecutor = Executors.newFixedThreadPool(shardCount, RtThreadFactory.forThreadPool("WAL-Worker"));
     }
 
     @Override
@@ -367,6 +367,9 @@ public class ShardStorageEngine implements StorageEngine {
         // 基于概率的主动内存检查，按照分片级别
         if (ThreadLocalRandom.current().nextDouble() < 0.3) { // 30%概率触发检查
             flushExecutor.execute(() -> {
+                if (!isRunning.get()){
+                    return;
+                }
                 for (int i = 0; i < shardCount; i++) {
                     if (memTableShards[i].memoryCounter.sum() > 0.7 * maxMemory / shardCount) {
                         evictLRU(i);
@@ -705,10 +708,14 @@ public class ShardStorageEngine implements StorageEngine {
             shutdownExecutor("Async", asyncExecutor);
             shutdownExecutor("Flush", flushExecutor);
             shutdownExecutor("Business", businessExecutor);
+            shutdownExecutor("walExecutor", walExecutor);
 
             // 3. 关闭Disruptor（添加状态检查）
             if (disruptor != null) {
                 try {
+                    // 清空未处理事件
+                    int bufferSize = ringBuffer.getBufferSize();
+                    log.info("Disruptor buffer size: {}", bufferSize);
                     disruptor.shutdown(10, TimeUnit.SECONDS);
                     log.info("Disruptor shutdown completed");
                 } catch (TimeoutException e) {
@@ -717,6 +724,9 @@ public class ShardStorageEngine implements StorageEngine {
                     disruptor.shutdown();
                 }
             }
+
+            // 4. 确保所有任务完成后再关闭 RocksDB
+            awaitAllTasksCompletion();
 
             // 4. 关闭数据存储（添加完整性检查）
             if (dataStorage != null) {
@@ -776,8 +786,9 @@ public class ShardStorageEngine implements StorageEngine {
             try {
                 log.info("Shutting down {} executor...", name);
                 List<Runnable> skipped = executor.shutdownNow();
-                if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                if (!executor.awaitTermination(20, TimeUnit.SECONDS)) {
                     log.warn("{} executor did not terminate in time", name);
+                    executor.shutdownNow(); // 强制关闭
                 }
                 log.info("{} executor shutdown complete. Skipped tasks: {}", name, skipped.size());
             } catch (Exception e) {
@@ -788,4 +799,26 @@ public class ShardStorageEngine implements StorageEngine {
         }
     }
 
+    // 新增方法：确保所有任务完成
+    private void awaitAllTasksCompletion() throws InterruptedException {
+        boolean allTasksCompleted = false;
+        while (!allTasksCompleted) {
+            allTasksCompleted = true;
+
+            // 检查线程池是否为空
+            if (asyncExecutor != null && !asyncExecutor.isTerminated()) {
+                allTasksCompleted = false;
+            }
+            if (flushExecutor != null && !flushExecutor.isTerminated()) {
+                allTasksCompleted = false;
+            }
+            if (businessExecutor != null && !businessExecutor.isTerminated()) {
+                allTasksCompleted = false;
+            }
+
+            if (!allTasksCompleted) {
+                Thread.sleep(100); // 等待 100ms 后再次检查
+            }
+        }
+    }
 }
