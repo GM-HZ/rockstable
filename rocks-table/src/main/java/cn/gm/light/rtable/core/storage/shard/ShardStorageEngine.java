@@ -733,16 +733,18 @@ public class ShardStorageEngine implements StorageEngine {
             // 6. 释放内存资源（新增）
             if (memTableShards != null) {
                 Arrays.stream(memTableShards).forEach(shard -> {
-                    if (Objects.isNull(shard))return;
-                    if (shard.activeMap != null) shard.activeMap.get().clear();
-                    if (shard.immutableMap != null) {
-                        ConcurrentSkipListMap<byte[], byte[]> immutableMap = shard.immutableMap.get();
-                        if (immutableMap != null) {
-                            immutableMap.clear();
-                        } else {
-                            log.debug("Encountered null immutableMap during shutdown for shard index: {}", Arrays.asList(memTableShards).indexOf(shard));
+                    if (shard != null) {
+                        // 添加空指针保护
+                        if (shard.activeMap != null) {
+                            shard.activeMap.get().clear();
                         }
-                    };
+                        if (shard.immutableMap != null) {
+                            ConcurrentSkipListMap<byte[], byte[]> immutableMap = shard.immutableMap.get();
+                            if (immutableMap != null) {
+                                immutableMap.clear();
+                            }
+                        }
+                    }
                 });
             }
 
@@ -751,10 +753,10 @@ public class ShardStorageEngine implements StorageEngine {
                 Arrays.stream(shardedLruCaches).forEach(Cache::invalidateAll);
             }
 
-            // 8. 关闭列族资源（新增）
-            if (shardCfHandles != null) {
-                Arrays.stream(shardCfHandles).forEach(ColumnFamilyHandle::close);
-            }
+//            // 8. 关闭列族资源（新增）
+//            if (shardCfHandles != null) {
+//                Arrays.stream(shardCfHandles).forEach(ColumnFamilyHandle::close);
+//            }
         } catch (Exception e) {
             log.error("Shutdown error", e);
         } finally {

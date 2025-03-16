@@ -149,8 +149,6 @@ public class DefaultShardLogStorage {
                     log.error("Failed to close RocksDB", e);
                 } finally {
                     logDB = null;
-                    columnFamilyHandles.forEach(ColumnFamilyHandle::close);
-                    columnFamilyHandles.clear();
                     log.info("RocksDB closed successfully.");
                 }
 
