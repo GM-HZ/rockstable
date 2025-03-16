@@ -8,18 +8,26 @@ import cn.gm.light.rtable.core.storage.DefaultStorageEngine;
 import cn.gm.light.rtable.core.storage.ReplicationEventListener;
 import cn.gm.light.rtable.entity.*;
 import cn.gm.light.rtable.entity.dto.ProxyToNodeRequest;
+import cn.gm.light.rtable.utils.RtThreadFactory;
 import cn.gm.light.rtable.utils.TimerTask;
+import cn.gm.light.rtable.utils.disruptor.TaskDispatcher;
+import cn.gm.light.rtable.utils.disruptor.WaitStrategyType;
+import com.alipay.remoting.NamedThreadFactory;
+import com.lmax.disruptor.dsl.Disruptor;
+import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ThreadFactory;
 
 /**
  * @project JavaStudy
  * @author 明溪
  * @version 1.0
  */
+@Slf4j
 public class ChunkImpl implements Chunk {
     private String chunkId;
     private TRP trp;
@@ -36,11 +44,18 @@ public class ChunkImpl implements Chunk {
     private TrpNode trpNode;
     private QueueCustomer queueConsumer;
 
+    private TaskDispatcher kvDispatcher;
+
     public ChunkImpl(Config config,TRP trp,TrpNode trpNode) {
         this.trp = trp;
         this.config = config;
         this.chunkId = trp.serialize()+"#"+ UUID.randomUUID().toString().replace("-","");
         this.trpNode = trpNode;
+        final int numWorkers = Runtime.getRuntime().availableProcessors() << 1;
+        final int bufSize = numWorkers << 4;
+        final String name = "parallel-kv-executor";
+        final ThreadFactory threadFactory = RtThreadFactory.forThreadPool(name);
+        this.kvDispatcher = new TaskDispatcher(bufSize, numWorkers, WaitStrategyType.LITE_BLOCKING_WAIT, threadFactory);
     }
 
 
@@ -57,19 +72,19 @@ public class ChunkImpl implements Chunk {
             Kv[] kvs = proxyToNodeRequest.getKvs();
             switch (proxyToNodeRequest.getOperation()) {
                 case PUT:
-                    this.storageEngine.put(kv);
+                    this.kvDispatcher.execute(()->this.storageEngine.put(kv));
                     break;
                 case GET:
-                    this.storageEngine.get(kv);
+                    this.kvDispatcher.execute(()->this.storageEngine.get(kv));
                     break;
                 case DELETE:
-                    this.storageEngine.delete(kv);
+                    this.kvDispatcher.execute(()->this.storageEngine.delete(kv));
                     break;
                 case BATCH_PUT:
-                    this.storageEngine.batchPut(kvs);
+                    this.kvDispatcher.execute(()->this.storageEngine.batchPut(kvs));
                     break;
                 case BATCH_GET:
-                    this.storageEngine.batchGet(kvs);
+                    this.kvDispatcher.execute(()->this.storageEngine.batchGet(kvs));
                     break;
                 case BATCH_DELETE:
                     break;

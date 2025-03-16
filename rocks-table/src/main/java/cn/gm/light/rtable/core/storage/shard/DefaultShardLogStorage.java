@@ -128,7 +128,7 @@ public class DefaultShardLogStorage {
     }
 
     public ShardStore getShardLogStorage(int shardId) {
-        return shardStoreFactory.getStore(shardId);
+        return shardStoreFactory.newInstance(shardId);
     }
 
     public void stop() {

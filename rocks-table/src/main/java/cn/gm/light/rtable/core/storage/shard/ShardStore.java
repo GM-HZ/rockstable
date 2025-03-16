@@ -13,6 +13,7 @@ public interface ShardStore {
 
     CompletableFuture<Long> asyncAppend(LogEntry[] entries);
 
+    void appendWithCallback(LogEntry[] entries,CompletableFuture<Long> future);
     List<LogEntry> read(long startIndex);
     void truncateSuffix(long startIndex);
 

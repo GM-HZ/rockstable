@@ -141,6 +141,17 @@ public class ShardStoreImpl implements ShardStore {
     }
 
     @Override
+    public void appendWithCallback(LogEntry[] entries, CompletableFuture<Long> future) {
+        CompletableFuture.supplyAsync(() -> append(entries)).whenComplete((result, error) -> {
+            if (error != null) {
+                future.completeExceptionally(error);
+            } else {
+                future.complete(result);
+            }
+        });
+    }
+
+    @Override
     public List<LogEntry> read(long startIndex) {
         if (startIndex < 0) {
             throw new IllegalArgumentException("Start index cannot be negative");

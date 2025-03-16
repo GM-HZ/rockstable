@@ -16,16 +16,19 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.stats.CacheStats;
 import com.google.common.base.Charsets;
+import com.lmax.disruptor.EventHandler;
+import com.lmax.disruptor.RingBuffer;
 import com.lmax.disruptor.SleepingWaitStrategy;
 import com.lmax.disruptor.TimeoutException;
 import com.lmax.disruptor.dsl.Disruptor;
 import com.lmax.disruptor.dsl.ProducerType;
+import jdk.internal.vm.annotation.Contended;
 import lombok.extern.slf4j.Slf4j;
 import org.rocksdb.ColumnFamilyDescriptor;
 import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.ColumnFamilyOptions;
 import org.rocksdb.CompressionType;
-import sun.misc.Contended;
+
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -109,7 +112,9 @@ public class ShardStorageEngine implements StorageEngine {
     private final ExecutorService businessExecutor;
 
     private final Disruptor<ShardBatchEvent> disruptor;
-
+    private final RingBuffer<ShardBatchEvent> ringBuffer;
+    private final ExecutorService walExecutor;
+    private final ArrayBlockingQueue<Future<Void>> queue = new ArrayBlockingQueue<>(1024);
     public ShardStorageEngine(Config config, String chunkId, TRP trp) {
         this.config = config;
         this.trp = trp;
@@ -193,12 +198,12 @@ public class ShardStorageEngine implements StorageEngine {
                     log.error("线程池已满，任务被拒绝：{}", r.toString());
                 });
         // 初始化 Disruptor
-        disruptor = new Disruptor<>(ShardBatchEvent::new,
+        this.disruptor = new Disruptor<>(ShardBatchEvent::new,
                 1 << 20, // 1M buffer
                 RtThreadFactory.forThreadPool("Shard-Processor"),
                 ProducerType.MULTI,
                 new SleepingWaitStrategy(100, 1000));
-        disruptor.handleEventsWith((event, sequence, endOfBatch) -> {
+        this.disruptor.handleEventsWith((event, sequence, endOfBatch) -> {
             try {
                 log.debug("收到分片{} 批量写入请求,{}", event.shardIndex, event.batch.size());
                 processShardBatch(event.shardIndex, event.batch, event.tracker);
@@ -210,9 +215,12 @@ public class ShardStorageEngine implements StorageEngine {
                 event.reset();
             }
         });
-        disruptor.start();
+//        this.disruptor.handleEventsWith(new LogEntryHandler());
+        this.ringBuffer = this.disruptor.start();
         startFlushTask();
         isRunning.set(true);
+        // 优化点1：使用自定义线程池（避免ForkJoinPool竞争）
+        walExecutor = Executors.newFixedThreadPool(shardCount, RtThreadFactory.forThreadPool("WAL-Worker"));
     }
 
     @Override
@@ -230,6 +238,99 @@ public class ShardStorageEngine implements StorageEngine {
             log.error("批量写入失败", e);
             return false;
         }
+    }
+
+
+    private class LogEntryHandler implements EventHandler<ShardBatchEvent>{
+        List<ShardBatchEvent> batch = new ArrayList<>();
+        private final int maxBatchSize = 16;
+        @Override
+        public void onEvent(ShardBatchEvent shardBatchEvent, long l, boolean b) throws Exception {
+            this.batch.add(shardBatchEvent);
+            if (batch.size() >= maxBatchSize || b){
+                applyBatch(batch);
+                reset();
+            }
+        }
+
+        private void reset() {
+            for (final ShardBatchEvent event : batch) {
+                event.reset();
+            }
+            batch.clear();
+        }
+
+
+    }
+
+    private void applyBatch(List<ShardBatchEvent> batch) {
+        // 这里的批量会有问题
+        ShardBatchEvent event = batch.get(0);
+        int shardIndex = event.shardIndex;
+        long lock = shardLocks[shardIndex].writeLock();
+        try {
+            CompletableFuture<Long> future = new CompletableFuture<>();
+            BatchRequestTracker tracker = event.tracker;
+            queue.offer(tracker.future);
+            process(shardIndex, event.batch,future);
+            future.whenComplete((result, error) -> {
+                if (error != null) {
+                    tracker.onShardComplete(error);
+                } else {
+                    tracker.onShardComplete(null);
+                }
+            });
+        }finally {
+            shardLocks[shardIndex].unlockWrite(lock);
+        }
+    }
+
+    // 在 disruptor.handleEventsWith() 中的处理器
+    private void process(int shardIndex, List<Kv> batch,CompletableFuture<Long> future) {
+        LogEntry[] array = getLogEntries(batch);
+        // 0. 写入wal,内部封装了RocksDB，已经加锁了，暂时是同步的，可以增加异步逻辑
+        shardLogStorage.getShardLogStorage(shardIndex).appendWithCallback(array,future);
+
+        MemTableShard shard = memTableShards[shardIndex];
+        // 1. 批量更新BloomFilter
+        Set<byte[]> keys = batch.stream()
+                .map(Kv::getKeyBytes)
+                .collect(Collectors.toSet());
+        bloomFilters[shardIndex].addAll(keys);
+
+        // 2. 批量写入内存表
+        // ConcurrentSkipListMap.put 是线程安全的
+        Map<byte[], byte[]> kvMap = batch.stream()
+                .collect(Collectors.toMap(
+                        Kv::getKeyBytes,
+                        Kv::getValueBytes,
+                        (oldVal, newVal) -> newVal
+                ));
+        shard.activeMap.get().putAll(kvMap);
+        if (shard.activeMap.get().containsKey(batch.get(0).getKeyBytes())){
+            log.debug("内存表过滤");
+        }
+
+        // 3. 批量更新LRU缓存,lruCache 是线程安全的
+        Map<ByteBuffer, byte[]> cacheEntries = batch.stream()
+                .collect(Collectors.toMap(
+                        kv -> ByteBuffer.wrap(kv.getKeyBytes()),
+                        Kv::getValueBytes,
+                        (oldVal, newVal) -> newVal
+                ));
+        shardedLruCaches[shardIndex].putAll(cacheEntries);
+
+        // 异步操作通知
+        asyncExecutor.execute(() -> {
+            // 新增内存统计（在锁内执行）
+            long delta = batch.stream()
+                    .mapToLong(kv ->
+                            kv.getKeyBytes().length +
+                                    (kv.getValueBytes() != null ? kv.getValueBytes().length : 0))
+                    .sum();
+            shard.memoryCounter.add(delta);
+            Arrays.stream(array).forEach(this::notifyReplicationListeners);
+        });
     }
 
     // 请求跟踪器，聚合多个分片的处理结果
@@ -275,6 +376,9 @@ public class ShardStorageEngine implements StorageEngine {
 
     @Override
     public CompletableFuture<Void> asyncBatchPut(Kv[] kvs) {
+        // todo这里应该单独用一个disruptor来操作并行提交任务，采用多消费者提高效率
+        // 内层单独使用
+
         // 批量提交优化
         writeRequests.increment();
         // 分片数据分组
@@ -282,17 +386,16 @@ public class ShardStorageEngine implements StorageEngine {
 
         // 创建请求跟踪器
         BatchRequestTracker tracker = new BatchRequestTracker(shardedBatch.size());
+        CompletableFuture<Void> future = tracker.getFuture();
         // 批量写入各分片
         // 无需外部锁
         shardedBatch.forEach((shardIndex, batch) -> {
             // 使用 Disruptor 发布事件
             log.debug("shardedBatch收到分片{} 批量写入请求,{}", shardIndex, batch.size());
-            disruptor.getRingBuffer().publishEvent((event, sequence) -> {
-                event.set(shardIndex, batch,tracker);
-            });
+            this.ringBuffer.publishEvent((event, sequence) -> event.set(shardIndex, batch,tracker));
         });
         evictData();
-        return tracker.getFuture();
+        return future;
     }
 
     private void evictData() {
