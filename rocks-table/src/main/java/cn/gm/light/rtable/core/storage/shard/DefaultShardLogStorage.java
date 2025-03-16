@@ -6,9 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.rocksdb.*;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -36,7 +34,7 @@ public class DefaultShardLogStorage {
         } catch (RocksDBException e) {
             throw new RuntimeException("Failed to initialize RocksDB", e);
         }
-        Map<Integer, ColumnFamilyHandle> collect = columnFamilyHandles.stream().collect(Collectors.toMap(ColumnFamilyHandle::getID, columnFamilyHandle -> columnFamilyHandle));
+        Map<Integer, ColumnFamilyHandle> collect = columnFamilyHandles.stream().collect(Collectors.toMap(ColumnFamilyHandle::getID, columnFamilyHandle -> columnFamilyHandle, (x, y) -> y));
         shardStoreFactory = new ShardStoreFactory(logDB,collect);
 
         // 日志输出验证
@@ -73,7 +71,10 @@ public class DefaultShardLogStorage {
 
             // 获取现有列族列表
             List<byte[]> existingCFs = RocksDB.listColumnFamilies(new Options(), dataDir);
-
+            // 转换现有列族为Set方便比对（使用内容对比）
+            Set<String> existingCFNames = existingCFs.stream()
+                    .map(String::new)
+                    .collect(Collectors.toSet());
             // 将默认列族作为第一个列族
             List<ColumnFamilyDescriptor> allDescriptors = new ArrayList<>();
             List<ColumnFamilyHandle> allHandles = new ArrayList<>();
@@ -81,19 +82,26 @@ public class DefaultShardLogStorage {
             // 添加默认列族
             allDescriptors.add(new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY));
 
+            // 合并逻辑优化
+            Set<String> mergedCFs = new HashSet<>();
             // 添加历史分片列族
-            existingCFs.forEach(existingCF -> {
-                String cfName = new String(existingCF);
-                if (!cfName.equals("default")) {
-                    allDescriptors.add(new ColumnFamilyDescriptor(existingCF));
-                }
-            });
+            // 1. 添加历史分片列族（排除默认）
+            existingCFs.stream()
+                    .filter(cf -> !Arrays.equals(cf, RocksDB.DEFAULT_COLUMN_FAMILY))
+                    .forEach(cf -> {
+                        String cfName = new String(cf);
+                        if (mergedCFs.add(cfName)) {
+                            allDescriptors.add(new ColumnFamilyDescriptor(cf));
+                        }
+                    });
 
-            // 添加新分片列族
+            // 2. 添加新分片列族（带去重）
             for (ColumnFamilyDescriptor descriptor : columnFamilyDescriptors) {
                 String cfName = new String(descriptor.getName());
-                if (!existingCFs.contains(descriptor.getName())) {
-                    log.debug("Creating new column family: {}", cfName);
+                if (mergedCFs.add(cfName)) {
+                    if (!existingCFNames.contains(cfName)) {
+                        log.debug("Creating new column family: {}", cfName);
+                    }
                     allDescriptors.add(descriptor);
                 }
             }

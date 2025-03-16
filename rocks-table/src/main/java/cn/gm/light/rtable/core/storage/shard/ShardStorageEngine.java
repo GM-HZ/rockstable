@@ -194,7 +194,7 @@ public class ShardStorageEngine implements StorageEngine {
                 });
         // 初始化 Disruptor
         disruptor = new Disruptor<>(ShardBatchEvent::new,
-                32 * 1024,
+                1 << 20, // 1M buffer
                 RtThreadFactory.forThreadPool("Shard-Processor"),
                 ProducerType.MULTI,
                 new SleepingWaitStrategy(100, 1000));
@@ -205,6 +205,9 @@ public class ShardStorageEngine implements StorageEngine {
             } catch (Exception e) {
                 log.error("分片处理失败", e);
                 event.tracker.onShardComplete(e);
+            }finally {
+                event.tracker.onShardComplete(null);
+                event.reset();
             }
         });
         disruptor.start();
@@ -297,7 +300,7 @@ public class ShardStorageEngine implements StorageEngine {
         if (ThreadLocalRandom.current().nextDouble() < 0.3) { // 30%概率触发检查
             flushExecutor.execute(() -> {
                 for (int i = 0; i < shardCount; i++) {
-                    if (memTableShards[i].memoryCounter.sum() > 0.8 * maxMemory / shardCount) {
+                    if (memTableShards[i].memoryCounter.sum() > 0.7 * maxMemory / shardCount) {
                         evictLRU(i);
                         break;
                     }
@@ -484,7 +487,9 @@ public class ShardStorageEngine implements StorageEngine {
 //            内存充足时完全不需要执行刷盘动作
 //    仍然通过WAL保证数据安全
     private void startFlushTask() {
-        flushExecutor.scheduleAtFixedRate(new FlushMemTables(), 10000, 10000, TimeUnit.MILLISECONDS);
+        flushExecutor.scheduleAtFixedRate(()->{
+            new FlushMemTables();
+        }, 10000, 10000, TimeUnit.MILLISECONDS);
     }
 
 
@@ -541,13 +546,6 @@ public class ShardStorageEngine implements StorageEngine {
                     shard.immutableMap.set(null); // 重置状态
                 }, flushExecutor));
             }
-            // 使用 CompletableFuture.allOf 并设置超时
-//            try {
-//                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-//                        .get(5, TimeUnit.SECONDS); // 设置超时避免永久阻塞
-//            } catch (java.util.concurrent.TimeoutException | InterruptedException | ExecutionException e) {
-//                log.warn("Flush task timeout or interrupted", e);
-//            }
         }
     }
 
@@ -627,6 +625,11 @@ public class ShardStorageEngine implements StorageEngine {
             this.shardIndex = shardIndex;
             this.batch = batch;
             this.tracker = tracker;
+        }
+        public void reset() {
+            this.shardIndex = 0;
+            this.batch = null;
+            this.tracker = null;
         }
     }
     // 在关闭存储引擎时
