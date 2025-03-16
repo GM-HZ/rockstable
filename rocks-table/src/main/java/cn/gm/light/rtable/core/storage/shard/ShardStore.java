@@ -33,4 +33,6 @@ public interface ShardStore {
     void markFlushIndex(Long lastMarkFlushIndex);
 
     long getMarkFlushIndex();
+
+    void close();
 }

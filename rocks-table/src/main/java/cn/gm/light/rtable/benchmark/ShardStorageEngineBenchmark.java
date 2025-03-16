@@ -11,7 +11,7 @@ import org.openjdk.jmh.infra.Blackhole;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
-@BenchmarkMode(Mode.Throughput)          // 测试吞吐量（ops/ms）
+@BenchmarkMode(Mode.All)          // 测试吞吐量（ops/ms）
 @OutputTimeUnit(TimeUnit.MILLISECONDS)   // 输出时间单位
 @Warmup(iterations = 3, time = 5)       // 预热3轮，每轮5秒
 @Measurement(iterations = 5, time = 10) // 正式测试5轮，每轮10秒
@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit;
 public class ShardStorageEngineBenchmark {
 
     // 分片数配置（参数化测试）
-    @Param({"16", "32", "64"})
+    @Param({"16"})
     private int shardCount;
 
     // 存储引擎实例（线程共享）

@@ -385,4 +385,16 @@ public class ShardStoreImpl implements ShardStore {
             lock.unlock();
         }
     }
+
+    @Override
+    public void close() {
+        lock.lock();
+        try {
+            if (cfHandle.isOwningHandle()) {
+                cfHandle.close();
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
 }

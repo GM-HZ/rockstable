@@ -22,4 +22,7 @@ public class ShardStoreFactory {
             return new ShardStoreImpl(logDB,cfHandle);
         });
     }
+    public void close() {
+        stores.values().forEach(ShardStore::close);
+    }
 }

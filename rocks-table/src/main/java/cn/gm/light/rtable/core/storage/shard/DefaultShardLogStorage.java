@@ -139,11 +139,7 @@ public class DefaultShardLogStorage {
                 logDB.flush(new FlushOptions().setWaitForFlush(true)); // 强制刷新所有MemTable
 
                 // 2. 关闭列族句柄（关键补充）
-                for (ColumnFamilyHandle handle : columnFamilyHandles) {
-                    if (handle != null && handle.isOwningHandle()) {
-                        handle.close();
-                    }
-                }
+                shardStoreFactory.close();
 
                 // 3. 关闭数据库实例（原有代码增强）
                 try {
