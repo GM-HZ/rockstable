@@ -1,5 +1,6 @@
 package cn.gm.light.rtable.core.storage.shard;
 
+import cn.gm.light.rtable.core.closure.Closure;
 import cn.gm.light.rtable.entity.LogEntry;
 
 import java.util.List;
@@ -14,6 +15,8 @@ public interface ShardStore {
     CompletableFuture<Long> asyncAppend(LogEntry[] entries);
 
     void appendWithCallback(LogEntry[] entries,CompletableFuture<Long> future);
+
+    void appendWithClosure(LogEntry[] entries, Closure closure);
     List<LogEntry> read(long startIndex);
     void truncateSuffix(long startIndex);
 

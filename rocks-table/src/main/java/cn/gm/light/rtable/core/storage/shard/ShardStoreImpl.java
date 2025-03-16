@@ -1,5 +1,7 @@
 package cn.gm.light.rtable.core.storage.shard;
 
+import cn.gm.light.rtable.Status;
+import cn.gm.light.rtable.core.closure.Closure;
 import cn.gm.light.rtable.entity.LogEntry;
 import cn.gm.light.rtable.utils.LongToByteArray;
 import com.alibaba.fastjson2.JSON;
@@ -147,6 +149,17 @@ public class ShardStoreImpl implements ShardStore {
                 future.completeExceptionally(error);
             } else {
                 future.complete(result);
+            }
+        });
+    }
+
+    @Override
+    public void appendWithClosure(LogEntry[] entries, Closure closure) {
+        CompletableFuture.supplyAsync(() -> append(entries)).whenComplete((result, error) -> {
+            if (error != null) {
+                closure.run(new Status(1, error.getMessage()));
+            } else {
+                closure.run(Status.OK());
             }
         });
     }
