@@ -24,12 +24,12 @@ import com.lmax.disruptor.SleepingWaitStrategy;
 import com.lmax.disruptor.TimeoutException;
 import com.lmax.disruptor.dsl.Disruptor;
 import com.lmax.disruptor.dsl.ProducerType;
-import jdk.internal.vm.annotation.Contended;
 import lombok.extern.slf4j.Slf4j;
 import org.rocksdb.ColumnFamilyDescriptor;
 import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.ColumnFamilyOptions;
 import org.rocksdb.CompressionType;
+import sun.misc.Contended;
 
 
 import java.nio.ByteBuffer;
